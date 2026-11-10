@@ -407,7 +407,7 @@
     /* ------------------------------------------------------------------ */
     /* Компонент                                                           */
     /* ------------------------------------------------------------------ */
-    var PLAY = '<svg viewBox="0 0 24 24" width="1em" height="1em" style="vertical-align:-.12em;margin-right:.45em"><path d="M7 4.5v15l13-7.5z" fill="currentColor"/></svg>';
+    var PLAY = '<span class="yummy-ico-play"></span>';
 
     function Component(object) {
         var self = this;
@@ -1109,6 +1109,8 @@
             /* кнопки */
             '.yummy-btn{display:inline-block;padding:.75em 1.6em;margin:0 .8em .6em 0;border-radius:2em;font-size:1.2em;font-weight:600;transition:transform .2s,background-color .2s,color .2s,box-shadow .2s}',
             '.yummy-btn--main{background:#fff;color:#000}',
+            '.yummy-btn svg{display:none!important}',
+            '.yummy-ico-play{display:inline-block;width:0;height:0;border-style:solid;border-width:.42em 0 .42em .7em;border-color:transparent transparent transparent currentColor;margin-right:.5em;vertical-align:-.05em}',
             '.yummy-btn--dim{opacity:.7}',
             '.yummy-btn--glass.focus,.yummy-btn.focus{background:#fff;color:#000}',
             '.yummy-btn.focus{transform:scale(1.07);box-shadow:0 .5em 1.6em rgba(255,255,255,.28)}',
