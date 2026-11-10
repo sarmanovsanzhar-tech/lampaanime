@@ -350,9 +350,10 @@
         return !had;
     }
     function histGet(id) { var l = arr('yummy_hist'); for (var i = 0; i < l.length; i++) if (l[i].id === id) return l[i]; return null; }
-    function histSave(y, num) {
+    function histSave(y, num, img) {
+        var old = histGet(y.id);
         var list = arr('yummy_hist').filter(function (x) { return x.id !== y.id; });
-        var h = compact(y); h.ep = num; h.ts = Date.now();
+        var h = compact(y); h.ep = num; h.ts = Date.now(); h.img = img || (old && old.ep === num && old.img) || '';
         list.unshift(h);
         W('yummy_hist', list.slice(0, 100));
     }
@@ -479,6 +480,21 @@
             return c;
         }
 
+        function epCard(item, o) {
+            var t = $('<div class="yummy-ep selector"><div class="yummy-ep__img"><div class="yummy-badge yummy-glass"></div></div><div class="yummy-ep__name"></div><div class="yummy-ep__q"></div></div>');
+            var im = t.find('.yummy-ep__img'), p = pct(item.id, item.ep);
+            var src = item.img || item.poster;
+            if (src) im.css('background-image', 'url("' + src + '")');
+            if (!item.img) im.addClass('yummy-ep__img--poster');
+            t.find('.yummy-badge').text('Серия ' + item.ep);
+            if (p > 0) im.append($('<div class="yummy-bar"><i></i></div>').find('i').css('width', Math.min(p, 100) + '%').end());
+            t.find('.yummy-ep__name').text(item.title);
+            t.find('.yummy-ep__q').text(p >= 90 ? 'Просмотрено · дальше' : (p > 0 ? 'Продолжить · ' + p + '%' : 'Серия ' + item.ep));
+            sel(t, o.rs, o.wrap);
+            t.on('hover:enter', function () { openTitle(compact(item), true); });
+            return t;
+        }
+
         /* ============================ HOME ============================= */
         var topEl, barEl, heroWrap, rowsEl, gridEl, state = { page: 0, loading: false, ended: false };
         var TABS = [['home', 'Главная'], ['catalog', 'Каталог'], ['search', 'Поиск'], ['fav', 'Избранное'], ['hist', 'История']];
@@ -575,20 +591,20 @@
             }
             refresh();
         }
-        function fillRow(key, title, list) {
+        function fillRow(key, title, list, mk) {
             var wrap = rowEls[key];
             kill(rowScroll[key]);
             var rs = new Lampa.Scroll({ horizontal: true, step: 300 });
             rowScroll[key] = rs;
             wrap.empty().append($('<div class="yummy-row__t"></div>').text(title));
-            list.forEach(function (it) { rs.append(card(it, { rs: rs, wrap: wrap })); });
+            list.forEach(function (it) { rs.append((mk || card)(it, { rs: rs, wrap: wrap })); });
             wrap.append(rs.render()).show();
         }
         function renderHist() {
             var h = arr('yummy_hist').slice(0, ROWN);
             if (!h.length) { kill(rowScroll.hist); delete rowScroll.hist; rowEls.hist && rowEls.hist.empty().hide(); return; }
             loadHM();
-            fillRow('hist', ROWS[0][1], h.map(function (x) { return x; }));
+            fillRow('hist', ROWS[0][1], h, epCard);
         }
         function heroBtns(el, item) {
             var play = sel($('<div class="yummy-btn yummy-btn--main selector"></div>').html(PLAY + 'Смотреть'), null, null, topEl);
@@ -1012,7 +1028,8 @@
                 });
             });
             if (!list.length) return Lampa.Noty.show('Нет доступных серий');
-            histSave(T.y, String(startNum));
+            var cur = epByNum(startNum);
+            histSave(T.y, String(startNum), cur && cur.img);
             T.played = true;
             Lampa.Player.play(list[startIdx]);
             Lampa.Player.playlist(list);
@@ -1022,7 +1039,7 @@
             T.played = false;
             if (T.rel) {
                 var eps = T.rel.episodes.filter(playable), w = lastWatched(eps);
-                if (w) histSave(T.y, eps[w.i].num);
+                if (w) histSave(T.y, eps[w.i].num, eps[w.i].img);
             }
             renderEps(); updateButtons(); refresh(true);
         }
@@ -1101,17 +1118,18 @@
             '.yummy-tab--active{background:rgba(255,255,255,.24)}',
             '.yummy-tab.focus{background:#fff;color:#000;transform:scale(1.07)}',
             /* hero */
-            '.yummy-hero{position:relative;margin:.6em 2em 0;border-radius:1.4em;overflow:hidden;min-height:23em;background:#12141b}',
+            '.yummy-hero{position:relative;margin:.6em 2em 0;border-radius:1.4em;overflow:hidden;min-height:12em;background:#12141b}',
             '.yummy-hero--ghost{opacity:.5}',
             '.yummy-hero__bg,.yummy-title__bg{position:absolute;top:0;left:0;right:0;bottom:0;background:#12141b center 22%/cover no-repeat}',
             '.yummy-hero__sh{position:absolute;top:0;left:0;right:0;bottom:0;background:linear-gradient(90deg,rgba(' + BG + ',.97) 0%,rgba(' + BG + ',.86) 36%,rgba(' + BG + ',.2) 78%),linear-gradient(0deg,rgba(' + BG + ',.85) 0%,rgba(' + BG + ',0) 50%)}',
-            '.yummy-hero__body{position:relative;padding:2.6em 2.8em 2.2em;max-width:48%;box-sizing:border-box}',
-            '.yummy-hero__kick{font-size:.95em;letter-spacing:.16em;text-transform:uppercase;font-weight:600;opacity:.65;margin-bottom:.7em}',
-            '.yummy-hero__title{font-size:2.8em;font-weight:700;line-height:1.08;letter-spacing:-.025em;max-height:2.2em;overflow:hidden}',
-            '.yummy-chips{margin-top:.9em}',
+            '.yummy-hero__body{position:relative;padding:1.5em 2em 1.3em;max-width:56%;box-sizing:border-box}',
+            '.yummy-hero__kick{font-size:.95em;letter-spacing:.16em;text-transform:uppercase;font-weight:600;opacity:.65;margin-bottom:.4em}',
+            '.yummy-hero__title{font-size:1.9em;font-weight:700;line-height:1.1;letter-spacing:-.025em;max-height:2.2em;overflow:hidden}',
+            '.yummy-chips{margin-top:.6em}',
             '.yummy-pill{display:inline-block;padding:.25em .8em;margin:0 .5em .5em 0;border-radius:2em;font-size:1em;font-weight:500}',
-            '.yummy-hero__desc{margin:.5em 0 1.4em;line-height:1.5;opacity:.8;font-size:1.1em;max-height:6em;overflow:hidden}',
+            '.yummy-hero__desc{margin:.2em 0 .9em;line-height:1.45;opacity:.8;font-size:1em;max-height:2.9em;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}',
             /* кнопки */
+            '.yummy-hero .yummy-btn{font-size:1.05em;padding:.6em 1.4em;margin-bottom:0}',
             '.yummy-btn{display:inline-block;padding:.75em 1.6em;margin:0 .8em .6em 0;border-radius:2em;font-size:1.2em;font-weight:600;transition:transform .15s}',
             '.yummy-btn--main{background:#fff;color:#000}',
             '.yummy-btn svg{display:none!important}',
@@ -1169,6 +1187,7 @@
             /* серии */
             '.yummy-ep{flex:0 0 auto;width:17em;margin-right:1.1em;transition:transform .16s ease-out}',
             '.yummy-ep__img{position:relative;padding-bottom:56.25%;border-radius:.9em;background:#1b1e27 linear-gradient(135deg,#262a38,#14161e) center/cover no-repeat;overflow:hidden}',
+            '.yummy-ep__img--poster{background-position:center 18%}',
             '.yummy-ep__n{position:absolute;left:.55em;bottom:.2em;font-size:2.4em;font-weight:700}',
             '.yummy-ep__name{margin-top:.6em;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
             '.yummy-ep__q{opacity:.55;font-size:.9em;margin-top:.15em}',
