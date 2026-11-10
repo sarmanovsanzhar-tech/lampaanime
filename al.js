@@ -18,7 +18,7 @@
     var DEF_API = 'https://api.yani.tv';
     var FALLBACK_API = 'https://old.yummyani.me/api';
     var DEF_ANI = 'https://anilibria.top';
-    var PAGE = 24, ROWN = 20;
+    var PAGE = 24, ROWN = 15;
     var RC_TTL = 15 * 60e3;
     var TTL = { catalog: 10 * 60e3, search: 10 * 60e3, detail: 60 * 60e3, videos: 30 * 60e3, release: 30 * 60e3 };
 
@@ -414,16 +414,18 @@
         var scroll = new Lampa.Scroll({ mask: true, over: true, step: 250 });
         var root = $('<div class="yummy"></div>');
         var last = false, destroyed = false, timer = 0, gen = 0;
-        var rowScroll = {}, HM = {};
+        var rowScroll = {}, HM = {}, lastTop = null, q = [], qt = 0;
         var mode = object.mode || 'home';
-        if (String(S('yummy_glass', 'on')) === 'off') root.addClass('yummy--flat');
+        if (String(S('yummy_glass', 'off')) === 'off') root.addClass('yummy--flat');
 
         function loadHM() { HM = {}; arr('yummy_hist').forEach(function (h) { HM[h.id] = h; }); }
         function sel(el, rs, wrap, top) {
             el.on('hover:focus', function (e) {
                 last = e.target;
                 if (rs) rs.update($(e.target), true);
-                scroll.update(top || wrap || $(e.target), true);
+                var key = top || wrap;
+                if (key) { if (key !== lastTop) { lastTop = key; scroll.update(key, true); } }
+                else { lastTop = null; scroll.update($(e.target), true); }
             });
             return el;
         }
@@ -449,7 +451,7 @@
                 Lampa.Controller.toggle('content');
             }
         }
-        function refresh(now) { clearTimeout(timer); if (now) doRefresh(); else timer = setTimeout(doRefresh, 40); }
+        function refresh(now) { clearTimeout(timer); if (now) doRefresh(); else timer = setTimeout(doRefresh, 90); }
         function openTitle(item, auto) {
             Lampa.Activity.push({ url: '', title: item.title, component: 'yummy_anime', mode: 'title', item: item, autoplay: !!auto, page: 1 });
         }
@@ -508,7 +510,10 @@
                 $(this).toggleClass('yummy-tab--active', $(this).attr('data-tab') === object.tab);
             });
         }
+        function enqueue(fn) { q.push(fn); if (!qt) qt = setTimeout(pump, 0); }
+        function pump() { qt = 0; var f = q.shift(); if (f && !destroyed) f(); if (q.length) qt = setTimeout(pump, 130); }
         function clearRows() {
+            q = []; clearTimeout(qt); qt = 0; lastTop = null;
             Object.keys(rowScroll).forEach(function (k) { kill(rowScroll[k]); });
             rowScroll = {};
         }
@@ -562,7 +567,7 @@
             if (list.length) {
                 shown++;
                 if (!heroDone) { heroDone = true; renderHero(list); }
-                fillRow(r[0], r[1], list);
+                enqueue(function () { if (g === gen && !destroyed) { fillRow(r[0], r[1], list); refresh(); } });
             }
             if (!pending && !shown && !arr('yummy_hist').length) {
                 heroWrap.empty();
@@ -1055,7 +1060,7 @@
         this.stop = function () {};
         this.destroy = function () {
             destroyed = true;
-            clearTimeout(timer);
+            clearTimeout(timer); clearTimeout(qt);
             clearRows(); kill(seasonRS); kill(epsRS);
             scroll.destroy();
             root.remove();
@@ -1079,7 +1084,7 @@
     function addStyle() {
         var BG = '7,8,13';
         var css = [
-            '.yummy{color:#fff;background:#07080d;min-height:100%;font-family:-apple-system,"SF Pro Display","Inter","Segoe UI",Roboto,Arial,sans-serif;letter-spacing:-.01em;animation:yFade .45s ease both}',
+            '.yummy{color:#fff;background:#07080d;min-height:100%;font-family:-apple-system,"SF Pro Display","Inter","Segoe UI",Roboto,Arial,sans-serif;letter-spacing:-.01em}',
             '@keyframes yFade{from{opacity:0}to{opacity:1}}',
             '@keyframes yRise{from{opacity:0;transform:translate3d(0,.7em,0)}to{opacity:1;transform:none}}',
             /* стекло */
@@ -1091,13 +1096,13 @@
             '.yummy-hello__a{display:block;font-size:1.2em;font-weight:500;opacity:.6;animation:yRise .8s .1s both cubic-bezier(.2,.8,.2,1)}',
             '.yummy-hello__b{display:block;font-size:2.7em;line-height:1.12;margin-top:.1em;animation:yRise .9s .3s both cubic-bezier(.2,.8,.2,1)}',
             '.yummy-hello__b i{font-family:Georgia,"Times New Roman",serif;font-style:italic;font-weight:400;color:#ffd9a8;background:linear-gradient(100deg,#fff 0%,#ffe0b8 45%,#ff9f80 100%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}',
-            '.yummy-tabs{display:flex;flex-wrap:wrap;margin-bottom:.6em;animation:yRise .9s .5s both}',
-            '.yummy-tab{padding:.55em 1.2em;margin-left:.6em;border-radius:2em;font-size:1.1em;font-weight:500;transition:transform .2s,background-color .2s,color .2s}',
+            '.yummy-tabs{display:flex;flex-wrap:wrap;margin-bottom:.6em}',
+            '.yummy-tab{padding:.55em 1.2em;margin-left:.6em;border-radius:2em;font-size:1.1em;font-weight:500;transition:transform .15s}',
             '.yummy-tab--active{background:rgba(255,255,255,.24)}',
             '.yummy-tab.focus{background:#fff;color:#000;transform:scale(1.07)}',
             /* hero */
-            '.yummy-hero{position:relative;margin:.6em 2em 0;border-radius:1.4em;overflow:hidden;min-height:23em;background:#12141b;animation:yRise .9s .55s both cubic-bezier(.2,.8,.2,1)}',
-            '.yummy-hero--ghost{animation:none;opacity:.5}',
+            '.yummy-hero{position:relative;margin:.6em 2em 0;border-radius:1.4em;overflow:hidden;min-height:23em;background:#12141b}',
+            '.yummy-hero--ghost{opacity:.5}',
             '.yummy-hero__bg,.yummy-title__bg{position:absolute;top:0;left:0;right:0;bottom:0;background:#12141b center 22%/cover no-repeat}',
             '.yummy-hero__sh{position:absolute;top:0;left:0;right:0;bottom:0;background:linear-gradient(90deg,rgba(' + BG + ',.97) 0%,rgba(' + BG + ',.86) 36%,rgba(' + BG + ',.2) 78%),linear-gradient(0deg,rgba(' + BG + ',.85) 0%,rgba(' + BG + ',0) 50%)}',
             '.yummy-hero__body{position:relative;padding:2.6em 2.8em 2.2em;max-width:48%;box-sizing:border-box}',
@@ -1107,13 +1112,13 @@
             '.yummy-pill{display:inline-block;padding:.25em .8em;margin:0 .5em .5em 0;border-radius:2em;font-size:1em;font-weight:500}',
             '.yummy-hero__desc{margin:.5em 0 1.4em;line-height:1.5;opacity:.8;font-size:1.1em;max-height:6em;overflow:hidden}',
             /* кнопки */
-            '.yummy-btn{display:inline-block;padding:.75em 1.6em;margin:0 .8em .6em 0;border-radius:2em;font-size:1.2em;font-weight:600;transition:transform .2s,background-color .2s,color .2s,box-shadow .2s}',
+            '.yummy-btn{display:inline-block;padding:.75em 1.6em;margin:0 .8em .6em 0;border-radius:2em;font-size:1.2em;font-weight:600;transition:transform .15s}',
             '.yummy-btn--main{background:#fff;color:#000}',
             '.yummy-btn svg{display:none!important}',
             '.yummy-ico-play{display:inline-block;width:0;height:0;border-style:solid;border-width:.42em 0 .42em .7em;border-color:transparent transparent transparent currentColor;margin-right:.5em;vertical-align:-.05em}',
             '.yummy-btn--dim{opacity:.7}',
             '.yummy-btn--glass.focus,.yummy-btn.focus{background:#fff;color:#000}',
-            '.yummy-btn.focus{transform:scale(1.07);box-shadow:0 .5em 1.6em rgba(255,255,255,.28)}',
+            '.yummy-btn.focus{transform:scale(1.06)}',
             '.yummy-btn--wide{display:block;width:100%;box-sizing:border-box;border-radius:1em}',
             '.yummy-wide{width:100%;padding:0 .5em}',
             /* подборки */
@@ -1123,10 +1128,11 @@
             '.yummy-row .scroll__body{display:flex;flex-wrap:nowrap;padding:1.1em 2em 2.4em}',
             '.yummy-grid{display:flex;flex-wrap:wrap;padding:1.2em 1.4em 3em}',
             /* карточки */
-            '.yummy-card{flex:0 0 auto;width:11.5em;margin:0 1.1em 1.6em 0;position:relative;transition:transform .22s ease-out;-webkit-transform:translateZ(0);transform:translateZ(0)}',
-            '.yummy-card__img{position:relative;padding-bottom:150%;border-radius:1em;background:#1b1e27 center/cover no-repeat;overflow:hidden;box-shadow:0 .2em .8em rgba(0,0,0,.4);transition:box-shadow .22s ease-out}',
-            '.yummy-card.focus{transform:translate3d(0,-.3em,0) scale(1.08);z-index:2}',
-            '.yummy-card.focus .yummy-card__img{box-shadow:0 1em 2.2em rgba(0,0,0,.65),0 0 0 .13em rgba(255,255,255,.92)}',
+            '.yummy-card{flex:0 0 auto;width:11.5em;margin:0 1.1em 1.6em 0;position:relative;transition:transform .16s ease-out}',
+            '.yummy-card__img{position:relative;padding-bottom:150%;border-radius:1em;background:#1b1e27 center/cover no-repeat;overflow:hidden}',
+            '.yummy-card__img:after,.yummy-ep__img:after{content:"";position:absolute;top:0;left:0;right:0;bottom:0;border-radius:inherit;box-shadow:inset 0 0 0 .14em rgba(255,255,255,.95);opacity:0;transition:opacity .16s}',
+            '.yummy-card.focus{transform:scale(1.07);will-change:transform;z-index:2}',
+            '.yummy-card.focus .yummy-card__img:after{opacity:1}',
             '.yummy-card__title{margin-top:.65em;font-size:1.08em;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
             '.yummy-card__sub{opacity:.55;font-size:.92em;margin-top:.15em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
             '.yummy-badge{position:absolute;top:.6em;left:.6em;padding:.2em .65em;border-radius:2em;font-size:.85em;font-weight:600}',
@@ -1136,8 +1142,8 @@
             '.yummy-title{position:relative;overflow:hidden;min-height:26em}',
             '.yummy-title__bg{opacity:.5;background-position:center 20%}',
             '.yummy-title__sh{position:absolute;top:0;left:0;right:0;bottom:0;background:linear-gradient(90deg,rgba(' + BG + ',.96) 0%,rgba(' + BG + ',.75) 55%,rgba(' + BG + ',.35) 100%),linear-gradient(0deg,rgba(' + BG + ',1) 0%,rgba(' + BG + ',0) 55%)}',
-            '.yummy-info{position:relative;display:flex;padding:2.4em 2.4em 1.2em;animation:yRise .7s both cubic-bezier(.2,.8,.2,1)}',
-            '.yummy-info__poster{flex:0 0 14em;height:21em;border-radius:1em;background:#1b1e27 center/cover no-repeat;margin-right:2.4em;box-shadow:0 1.2em 2.6em rgba(0,0,0,.6)}',
+            '.yummy-info{position:relative;display:flex;padding:2.4em 2.4em 1.2em}',
+            '.yummy-info__poster{flex:0 0 14em;height:21em;border-radius:1em;background:#1b1e27 center/cover no-repeat;margin-right:2.4em;}',
             '.yummy-info__body{flex:1;min-width:0}',
             '.yummy-info__title{font-size:2.7em;font-weight:700;line-height:1.1;letter-spacing:-.025em}',
             '.yummy-info__orig{opacity:.5;margin-top:.35em;font-size:1.1em}',
@@ -1150,26 +1156,26 @@
             '.yummy-panel__s{opacity:.6;margin:.15em 0 .9em}',
             '.yummy-chiprow{margin-top:.2em}',
             '.yummy-chiplabel{display:inline-block;opacity:.55;margin:0 .9em .6em 0;font-size:1.05em}',
-            '.yummy-chip{display:inline-block;padding:.5em 1.1em;margin:0 .6em .6em 0;border-radius:2em;background:rgba(255,255,255,.09);font-size:1.05em;font-weight:500;max-width:24em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:top;transition:transform .2s,background-color .2s,color .2s}',
+            '.yummy-chip{display:inline-block;padding:.5em 1.1em;margin:0 .6em .6em 0;border-radius:2em;background:rgba(255,255,255,.09);font-size:1.05em;font-weight:500;max-width:24em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:top;transition:transform .15s}',
             '.yummy-chip--on{background:rgba(255,255,255,.26)}',
             '.yummy-chip.focus{background:#fff;color:#000;transform:scale(1.06)}',
             '.yummy-chip--season{flex:0 0 auto;display:block}',
-            '.yummy-cand{padding:.8em 1.1em;margin-bottom:.5em;border-radius:.9em;background:rgba(255,255,255,.07);transition:transform .2s,background-color .2s}',
+            '.yummy-cand{padding:.8em 1.1em;margin-bottom:.5em;border-radius:.9em;background:rgba(255,255,255,.07);transition:transform .15s}',
             '.yummy-cand.focus{background:#fff;color:#000;transform:scale(1.02)}',
             '.yummy-cand__s{opacity:.6;margin-top:.15em}',
             '.yummy-msg{margin:.6em 2em;padding:1.2em 1.5em;border-radius:1.2em}',
             '.yummy-msg__text{margin-bottom:.9em;opacity:.85;font-size:1.15em;line-height:1.45}',
             '.yummy-block .yummy-msg{margin:.4em 0}',
             /* серии */
-            '.yummy-ep{flex:0 0 auto;width:17em;margin-right:1.1em;transition:transform .22s ease-out;-webkit-transform:translateZ(0);transform:translateZ(0)}',
-            '.yummy-ep__img{position:relative;padding-bottom:56.25%;border-radius:.9em;background:#1b1e27 linear-gradient(135deg,#262a38,#14161e) center/cover no-repeat;overflow:hidden;box-shadow:0 .2em .8em rgba(0,0,0,.4);transition:box-shadow .22s ease-out}',
-            '.yummy-ep__n{position:absolute;left:.55em;bottom:.2em;font-size:2.4em;font-weight:700;text-shadow:0 .05em .4em rgba(0,0,0,.7)}',
+            '.yummy-ep{flex:0 0 auto;width:17em;margin-right:1.1em;transition:transform .16s ease-out}',
+            '.yummy-ep__img{position:relative;padding-bottom:56.25%;border-radius:.9em;background:#1b1e27 linear-gradient(135deg,#262a38,#14161e) center/cover no-repeat;overflow:hidden}',
+            '.yummy-ep__n{position:absolute;left:.55em;bottom:.2em;font-size:2.4em;font-weight:700}',
             '.yummy-ep__name{margin-top:.6em;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
             '.yummy-ep__q{opacity:.55;font-size:.9em;margin-top:.15em}',
-            '.yummy-ep.focus{transform:translate3d(0,-.25em,0) scale(1.07);z-index:2}',
-            '.yummy-ep.focus .yummy-ep__img{box-shadow:0 1em 2.2em rgba(0,0,0,.65),0 0 0 .13em rgba(255,255,255,.92)}',
             '.yummy-ep--off{opacity:.38}',
-            '.yummy-ep--cur .yummy-ep__img{box-shadow:0 0 0 .1em rgba(255,255,255,.5)}',
+            '.yummy-ep--cur .yummy-ep__img:after{opacity:.45}',
+            '.yummy-ep.focus{transform:scale(1.06);will-change:transform;z-index:2}',
+            '.yummy-ep.focus .yummy-ep__img:after{opacity:1}',
             /* адаптация */
             '@media (max-width:900px){.yummy-hero__body{max-width:100%}.yummy-hello__b{font-size:2em}.yummy-bar-top{display:block}.yummy-tab:first-child{margin-left:0}}',
             '@media (max-width:700px){.yummy-info{flex-direction:column}.yummy-info__poster{margin:0 0 1em}}'
@@ -1187,8 +1193,8 @@
         });
         Lampa.SettingsApi.addParam({
             component: 'yummyanime',
-            param: { name: 'yummy_glass', type: 'select', values: { on: 'Включён', off: 'Выключен (быстрее)' }, 'default': 'on' },
-            field: { name: 'Эффект стекла (Liquid Glass)', description: 'На слабых телевизорах выключите для плавности. Применяется при следующем открытии раздела' }
+            param: { name: 'yummy_glass', type: 'select', values: { on: 'Включён', off: 'Выключен (быстрее)' }, 'default': 'off' },
+            field: { name: 'Эффект стекла (Liquid Glass)', description: 'Красиво, но нагружает слабые ТВ. Применяется при следующем открытии раздела' }
         });
         Lampa.SettingsApi.addParam({
             component: 'yummyanime',
