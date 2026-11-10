@@ -371,7 +371,7 @@
     /* ------------------------------------------------------------------ */
     /* Подборки главного экрана                                            */
     /* ------------------------------------------------------------------ */
-    var ROWS = [['hist', 'Продолжить просмотр'], ['pop', 'Популярное аниме'], ['new', 'Новинки'], ['air', 'Сейчас выходит'], ['rec', 'Рекомендуем'], ['upd', 'Последние обновления']];
+    var ROWS = [['hist', 'Продолжить просмотр'], ['pop', 'Популярное'], ['new', 'Новинки'], ['air', 'Сейчас выходит']];
 
     function aniTries(k) {
         var L = ROWN, c = '/anime/catalog/releases?limit=' + L + '&page=1';
@@ -514,7 +514,7 @@
             barEl.append('<div class="yummy-hello"><span class="yummy-hello__a">Добро пожаловать в мир аниме,</span><span class="yummy-hello__b"><i>господин Санжар</i></span></div>');
             var tabs = $('<div class="yummy-tabs"></div>');
             TABS.forEach(function (t) {
-                var el = sel($('<div class="yummy-tab yummy-glass selector"></div>').text(t[1]).attr('data-tab', t[0]), null, null, topEl);
+                var el = sel($('<div class="yummy-tab selector"></div>').text(t[1]).attr('data-tab', t[0]), null, null, topEl);
                 el.on('hover:enter', function () { switchTab(t[0]); });
                 tabs.append(el);
             });
@@ -562,9 +562,9 @@
         }
 
         /* --- главная: Hero + подборки --- */
-        var rowEls = {}, heroDone = false, pending = 0, shown = 0;
+        var rowEls = {}, heroDone = false, pending = 0, shown = 0, lists = {};
         function buildRows() {
-            heroDone = false; pending = 0; shown = 0;
+            heroDone = false; pending = 0; shown = 0; lists = {};
             heroWrap.append('<div class="yummy-hero yummy-hero--ghost"></div>');
             ROWS.forEach(function (r) {
                 rowEls[r[0]] = $('<div class="yummy-row"></div>').hide();
@@ -572,7 +572,7 @@
             });
             renderHist();
             var ani = srcAni(), g = gen;
-            ROWS.slice(1).forEach(function (r) { pending++; loadRow(ani, r, g); });
+            ROWS.slice(1).concat([['rec', '']]).forEach(function (r) { pending++; loadRow(ani, r, g); });
         }
         function loadRow(ani, r, g) {
             var key = r[0], ck = (ani ? 'a' : 'y') + ':' + key, c = rcGet(ck);
@@ -588,9 +588,14 @@
         function showRow(r, list, g) {
             if (destroyed || g !== gen) return;
             pending--;
-            if (list.length) {
+            lists[r[0]] = list;
+            if (r[0] === 'rec') lists.recDone = true;
+            if (!heroDone) {
+                var hl = lists.rec && lists.rec.length ? lists.rec : (lists.recDone && lists.pop && lists.pop.length ? lists.pop : null);
+                if (hl) { heroDone = true; renderHero(hl); }
+            }
+            if (list.length && r[0] !== 'rec') {
                 shown++;
-                if (!heroDone) { heroDone = true; renderHero(list); }
                 enqueue(function () { if (g === gen && !destroyed) { fillRow(r[0], r[1], list); refresh(); } });
             }
             if (!pending && !shown && !arr('yummy_hist').length) {
@@ -605,7 +610,7 @@
             var rs = new Lampa.Scroll({ horizontal: true, step: 300 });
             rowScroll[key] = rs;
             wrap.empty().append($('<div class="yummy-row__t"></div>').text(title));
-            list.forEach(function (it) { rs.append((mk || card)(it, { rs: rs, wrap: wrap })); });
+            list.forEach(function (it) { rs.append((mk || card)(it, { rs: rs, wrap: wrap, sub: '' })); });
             wrap.append(rs.render()).show();
         }
         function renderHist() {
@@ -617,8 +622,8 @@
         function heroBtns(el, item) {
             var play = sel($('<div class="yummy-btn yummy-btn--main selector"></div>').html(PLAY + 'Смотреть'), null, null, topEl);
             play.on('hover:enter', function () { openTitle(compact(item), true); });
-            var fav = sel($('<div class="yummy-btn yummy-btn--glass yummy-glass selector"></div>'), null, null, topEl);
-            function lab() { fav.text(isFav(item.id) ? '✓ В избранном' : '+ В избранное'); }
+            var fav = sel($('<div class="yummy-btn yummy-btn--glass yummy-btn--round selector"></div>'), null, null, topEl);
+            function lab() { fav.text(isFav(item.id) ? '✓' : '+'); }
             lab();
             fav.on('hover:enter', function () {
                 var on = toggleFav(item);
@@ -631,12 +636,11 @@
             var pool = list.filter(function (i) { return i.poster; }).slice(0, 5);
             if (!pool.length) { heroWrap.empty(); return; }
             var it = pool[Math.floor(Math.random() * pool.length)];
-            var el = $('<div class="yummy-hero"><div class="yummy-hero__bg"></div><div class="yummy-hero__sh"></div><div class="yummy-hero__poster"></div><div class="yummy-hero__body"><div class="yummy-hero__kick">Рекомендуем</div><div class="yummy-hero__title"></div><div class="yummy-chips"></div><div class="yummy-hero__desc"></div><div class="yummy-hero__btns"></div></div></div>');
+            var el = $('<div class="yummy-hero"><div class="yummy-hero__bg"></div><div class="yummy-hero__sh"></div><div class="yummy-hero__poster"></div><div class="yummy-hero__body"><div class="yummy-hero__kick">Рекомендуем</div><div class="yummy-hero__title"></div><div class="yummy-hero__meta"></div><div class="yummy-hero__desc"></div><div class="yummy-hero__btns"></div></div></div>');
             el.find('.yummy-hero__bg,.yummy-hero__poster').css('background-image', 'url("' + it.poster + '")');
             el.find('.yummy-hero__title').text(it.title);
-            var chips = el.find('.yummy-chips');
-            var meta = [it.year || '', (it.genres || []).slice(0, 2).join(', '), it.rating ? '★ ' + it.rating : '', it.age, it.eps && (it.eps.count || it.eps.aired) ? (it.eps.count || it.eps.aired) + ' эп.' : ''].filter(Boolean);
-            meta.forEach(function (m) { chips.append($('<span class="yummy-pill yummy-glass"></span>').text(m)); });
+            var meta = [it.year || '', (it.genres || []).slice(0, 2).join(', '), it.rating ? '★ ' + it.rating : '', it.age].filter(Boolean);
+            el.find('.yummy-hero__meta').text(meta.join('  ·  '));
             el.find('.yummy-hero__desc').text(it.desc || '');
             heroBtns(el.find('.yummy-hero__btns'), it);
             heroWrap.empty().append(el);
@@ -744,7 +748,7 @@
             if (y.poster) el.find('.yummy-info__poster').css('background-image', 'url("' + y.poster + '")');
             el.find('.yummy-info__title').text(y.title);
             var chips = el.find('.yummy-chips');
-            meta.forEach(function (m) { chips.append($('<span class="yummy-pill yummy-glass"></span>').text(m)); });
+            chips.text(meta.join('  ·  ')).addClass('yummy-metaline');
             el.find('.yummy-info__desc').text(y.desc || '');
             btnPlay = sel($('<div class="yummy-btn yummy-btn--main selector"></div>'), null, null, titleEl);
             btnPlay.on('hover:enter', function () { var k = continueNum(); if (k) play(k); else Lampa.Noty.show('Нет доступных серий'); });
@@ -1110,7 +1114,7 @@
     function addStyle() {
         var BG = '13,8,26';
         var css = [
-            '.yummy{color:#fff;background:#0b0716;min-height:100%;font-family:-apple-system,"SF Pro Display","Inter","Segoe UI",Roboto,Arial,sans-serif;letter-spacing:-.01em}',
+            '.yummy{color:#fff;background:#0b0716;min-height:100%;font-family:"Inter",-apple-system,"SF Pro Display","Segoe UI",Roboto,Arial,sans-serif;letter-spacing:-.015em}',
             '@keyframes yFade{from{opacity:0}to{opacity:1}}',
             '@keyframes yRise{from{opacity:0;transform:translate3d(0,.7em,0)}to{opacity:1;transform:none}}',
             /* стекло */
@@ -1119,13 +1123,13 @@
             /* шапка и приветствие */
             '.yummy-bar-top{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;padding:1.8em 2em .5em}',
             '.yummy-hello{margin-bottom:.6em;max-width:100%}',
-            '.yummy-hello__a{display:block;font-size:1.2em;font-weight:500;opacity:.6;animation:yRise .8s .1s both cubic-bezier(.2,.8,.2,1)}',
-            '.yummy-hello__b{display:block;font-size:2.7em;line-height:1.12;margin-top:.1em;animation:yRise .9s .3s both cubic-bezier(.2,.8,.2,1)}',
-            '.yummy-hello__b i{font-family:Georgia,"Times New Roman",serif;font-style:italic;font-weight:400;color:#c4b5fd;background:linear-gradient(100deg,#f5f3ff 0%,#c4b5fd 45%,#8b5cf6 100%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}',
+            '.yummy-hello__a{display:block;font-size:1.1em;font-weight:500;opacity:.55;animation:yRise .8s .1s both cubic-bezier(.2,.8,.2,1)}',
+            '.yummy-hello__b{display:block;font-size:2.4em;line-height:1.12;margin-top:.1em;animation:yRise .9s .3s both cubic-bezier(.2,.8,.2,1)}',
+            '.yummy-hello__b i{font-family:"Playfair Display",Georgia,"Times New Roman",serif;font-style:italic;font-weight:500;color:#c4b5fd;background:linear-gradient(100deg,#f5f3ff 0%,#c4b5fd 45%,#8b5cf6 100%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}',
             '.yummy-tabs{display:flex;flex-wrap:wrap;margin-bottom:.6em}',
-            '.yummy-tab{padding:.55em 1.2em;margin-left:.6em;border-radius:2em;font-size:1.1em;font-weight:500;transition:transform .15s}',
-            '.yummy-tab--active{background:rgba(139,92,246,.55)}',
-            '.yummy-tab.focus{background:#ddd6fe;color:#2e1065;transform:scale(1.07)}',
+            '.yummy-tab{padding:.5em 1.1em;margin-left:.2em;border-radius:2em;font-size:1.1em;font-weight:600;opacity:.5;transition:transform .15s}',
+            '.yummy-tab--active{opacity:1;background:rgba(255,255,255,.12)}',
+            '.yummy-tab.focus{opacity:1;background:#ddd6fe;color:#2e1065;transform:scale(1.07)}',
             /* hero */
             '.yummy-hero{position:relative;margin:.6em 2em 0;border-radius:1.4em;overflow:hidden;min-height:13.6em;background:#150d2a}',
             '.yummy-hero--ghost{opacity:.5}',
@@ -1155,7 +1159,7 @@
             /* подборки */
             '.yummy-rows{padding-bottom:3em}',
             '.yummy-row{margin-top:1.1em}',
-            '.yummy-row__t{font-size:1.5em;font-weight:700;letter-spacing:-.02em;margin:0 0 .1em 1.35em}',
+            '.yummy-row__t{font-size:1.3em;font-weight:700;letter-spacing:-.025em;margin:0 0 .1em 1.55em}',
             '.yummy-row .scroll__body{display:flex;flex-wrap:nowrap;padding:1.1em 2em 2.4em}',
             '.yummy-grid{display:flex;flex-wrap:wrap;padding:1.2em 1.4em 3em}',
             /* карточки */
@@ -1212,10 +1216,15 @@
             '.yummy-ep--cur .yummy-ep__img:after{opacity:.45}',
             '.yummy-ep.focus{transform:scale(1.06);will-change:transform;z-index:2}',
             '.yummy-ep.focus .yummy-ep__img:after{opacity:1}',
+            '.yummy-metaline{opacity:.7;font-size:1.05em}',
+            '.yummy-hero__meta{opacity:.7;font-size:1.05em;margin-top:.5em}',
+            '.yummy-hero .yummy-btn--round{padding:0;width:2.5em;height:2.5em;line-height:2.5em;text-align:center;border-radius:50%;font-size:1.2em}',
+            '.yummy-card__sub:empty{display:none}',
             /* адаптация */
             '@media (max-width:900px){.yummy-hero__body{max-width:100%}.yummy-hello__b{font-size:2em}.yummy-bar-top{display:block}.yummy-tab:first-child{margin-left:0}}',
             '@media (max-width:700px){.yummy-info{flex-direction:column}.yummy-info__poster{margin:0 0 1em}}'
         ].join('');
+        $('<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:ital,wght@1,500&display=swap&subset=cyrillic">').appendTo('head');
         $('<style></style>').text(css).appendTo('head');
     }
 
