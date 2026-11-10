@@ -1,5 +1,5 @@
 /**
- * YummyAnime for Lampa v3.0.0 — premium tvOS-style design pass
+ * YummyAnime for Lampa v3.1.0 — premium tvOS-style design pass, no hero poster, lighter animations
  * Каталог YummyAnime + серии в озвучке AniLibria (HLS 480/720/1080) через встроенный плеер Lampa.
  *
  * Источники:
@@ -14,7 +14,7 @@
     if (window.yummyanime_plugin) return;
     window.yummyanime_plugin = true;
 
-    var VERSION = '3.0.0';
+    var VERSION = '3.1.0';
     var DEF_API = 'https://api.yani.tv';
     var FALLBACK_API = 'https://old.yummyani.me/api';
     var DEF_ANI = 'https://anilibria.top';
@@ -375,15 +375,17 @@
     /* ------------------------------------------------------------------ */
     /* ---- широкий кадр (backdrop) из TMDB, встроенного в Лампу ---- */
     function tmdbGet(path, ok, fail) {
-        var url = '';
-        try {
-            var k = Lampa.TMDB.key ? Lampa.TMDB.key() : '';
-            url = Lampa.TMDB.api(path + (k ? '&api_key=' + k : '') + '&language=ru-RU');
-        } catch (e) {}
-        if (!url) return fail && fail();
-        var n = new Lampa.Reguest();
-        n.timeout(10000);
-        n.silent(url, ok, function () { fail && fail(); });
+        var urls = [], k = '';
+        try { k = Lampa.TMDB.key ? Lampa.TMDB.key() : ''; } catch (e) {}
+        try { urls.push(Lampa.TMDB.api(path + (k ? '&api_key=' + k : '') + '&language=ru-RU')); } catch (e) {}
+        if (k) urls.push('https://api.themoviedb.org/3/' + path + '&api_key=' + k + '&language=ru-RU');
+        var i = 0;
+        (function next() {
+            if (i >= urls.length) return fail && fail();
+            var n = new Lampa.Reguest();
+            n.timeout(8000);
+            n.silent(urls[i++], ok, next);
+        })();
     }
     function tmdbImg(p) {
         try { return Lampa.TMDB.image('t/p/w1280' + p); } catch (e) { return 'https://image.tmdb.org/t/p/w1280' + p; }
@@ -593,7 +595,7 @@
             gen++;
             markTabs();
             clearRows();
-            gridEl.empty(); rowsEl.empty(); heroWrap.empty(); topEl.removeClass('yummy-top--bg yummy-top--poster');
+            gridEl.empty(); rowsEl.empty(); heroWrap.empty(); topEl.removeClass('yummy-top--bg');
             last = false;
             try { scroll.reset && scroll.reset(); } catch (e) {}
             state = { page: 0, loading: false, ended: false };
@@ -681,13 +683,11 @@
         }
         function renderHero(list) {
             var pool = list.filter(function (i) { return i.poster; }).slice(0, 5);
-            if (!pool.length) { heroWrap.empty(); topEl.removeClass('yummy-top--bg yummy-top--poster'); return; }
+            if (!pool.length) { heroWrap.empty(); topEl.removeClass('yummy-top--bg'); return; }
             var it = pool[Math.floor(Math.random() * pool.length)];
-            var el = $('<div class="yummy-hero"><div class="yummy-hero__poster"></div><div class="yummy-hero__body"><div class="yummy-hero__title"></div><div class="yummy-hero__desc"></div><div class="yummy-hero__meta"></div><div class="yummy-hero__btns"></div></div></div>');
-            // сначала мгновенно: размытый постер + чёткая карточка; затем подменяем на HD-кадр из TMDB
-            topEl.find('.yummy-top__bg').css('background-image', 'url("' + it.poster + '")');
-            el.find('.yummy-hero__poster').css('background-image', 'url("' + it.poster + '")');
-            topEl.removeClass('yummy-top--bg').addClass('yummy-top--poster');
+            var el = $('<div class="yummy-hero"><div class="yummy-hero__body"><div class="yummy-hero__title"></div><div class="yummy-hero__desc"></div><div class="yummy-hero__meta"></div><div class="yummy-hero__btns"></div></div></div>');
+            // пока кадр грузится — мягкое свечение; затем плавно появляется HD-кадр из TMDB (постер не используется)
+            topEl.removeClass('yummy-top--bg');
             var g = gen;
             tmdbBackdrop(it, function (url) {
                 if (!url || destroyed || g !== gen || object.tab !== 'home') return;
@@ -695,7 +695,7 @@
                 im.onload = function () {
                     if (destroyed || g !== gen || object.tab !== 'home') return;
                     topEl.find('.yummy-top__bg').css('background-image', 'url("' + url + '")');
-                    topEl.removeClass('yummy-top--poster').addClass('yummy-top--bg');
+                    topEl.addClass('yummy-top--bg');
                 };
                 im.src = url;
             });
@@ -1194,10 +1194,9 @@
             '.yummy-glass{background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.12);-webkit-backdrop-filter:blur(1.1em) saturate(1.5);backdrop-filter:blur(1.1em) saturate(1.5);box-shadow:inset 0 1px 0 rgba(255,255,255,.18)}',
             '.yummy--flat .yummy-glass{-webkit-backdrop-filter:none;backdrop-filter:none;background:rgba(40,34,62,.92);box-shadow:none}',
             /* шапка и приветствие */
-            '.yummy-top{position:relative;overflow:hidden}',
-            '.yummy-top__bg{position:absolute;top:0;right:0;bottom:0;width:78%;background:#0b0716 center 18%/cover no-repeat;opacity:0;transition:opacity .7s}',
+            '.yummy-top{position:relative;overflow:hidden;background:radial-gradient(ellipse at 78% 18%,rgba(124,58,237,.34),rgba(124,58,237,0) 62%)}',
+            '.yummy-top__bg{position:absolute;top:0;right:0;bottom:0;width:78%;background:#0b0716 center 18%/cover no-repeat;opacity:0;transition:opacity .5s}',
             '.yummy-top--bg .yummy-top__bg{opacity:1}',
-            '.yummy-top--poster .yummy-top__bg{opacity:.5;width:100%;filter:blur(1.2em);transform:scale(1.2)}',
             '.yummy-top__sh{position:absolute;top:0;left:0;right:0;bottom:0;background:linear-gradient(90deg,rgba(' + BG + ',1) 0%,rgba(' + BG + ',.88) 30%,rgba(' + BG + ',.25) 70%,rgba(' + BG + ',.1) 100%),linear-gradient(0deg,rgba(' + BG + ',1) 0%,rgba(' + BG + ',0) 38%)}',
             '.yummy-bar-top,.yummy-herowrap{position:relative}',
             '.yummy-bar-top{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;padding:.9em 2em .2em}',
@@ -1212,8 +1211,6 @@
             /* hero */
             '.yummy-hero{position:relative;margin:0;min-height:14em}',
             '.yummy-hero--ghost{opacity:.5}',
-            '.yummy-hero__poster{display:none;position:absolute;top:.2em;right:2.6em;width:9.2em;height:13.8em;border-radius:.9em;background:#1b1e27 center/cover no-repeat;box-shadow:0 .5em 1.6em rgba(0,0,0,.6)}',
-            '.yummy-top--poster .yummy-hero__poster{display:block}',
             '.yummy-title__bg{position:absolute;top:0;left:0;right:0;bottom:0;background:#12141b center 22%/cover no-repeat}',
             '.yummy-hero__body{position:relative;padding:1.2em 2em 2.2em;max-width:56%;box-sizing:border-box}',
             '.yummy-hero__title{font-size:2.9em;font-weight:800;line-height:1.08;letter-spacing:-.03em;max-height:2.2em;overflow:hidden}',
@@ -1303,44 +1300,34 @@
             '.yummy-card__rate{position:absolute;right:.6em;bottom:.6em;padding:.15em .55em;border-radius:.4em;background:rgba(0,0,0,.72);color:#fff;font-size:.95em;font-weight:700;line-height:1.4}',
             /* ===== v3: единая дизайн-система (tvOS) ===== */
             '.yummy-tabs{padding:.2em;border-radius:2em;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1)}',
-            '.yummy-tab{margin-left:0;padding:.5em 1.15em;opacity:.65;transition:transform .3s cubic-bezier(.2,.8,.2,1),background .2s,color .2s}',
+            '.yummy-tab{margin-left:0;padding:.5em 1.15em;opacity:.65}',
             '.yummy-tab--active{opacity:1;background:rgba(255,255,255,.18)}',
             '.yummy-hello__a{font-size:.95em;opacity:.6}',
             '.yummy-hello__b{font-size:1.7em}',
             /* кнопки и все «пилюли»: один фокус — белое стекло + подъём */
-            '.yummy-btn,.yummy-opt,.yummy-chip,.yummy-cand,.yummy-tab{transition:transform .3s cubic-bezier(.2,.8,.2,1),background .2s,color .2s,box-shadow .3s}',
+            '.yummy-btn,.yummy-opt,.yummy-chip,.yummy-cand,.yummy-tab{transition:transform .22s cubic-bezier(.2,.8,.2,1),background .15s,color .15s}',
             '.yummy-btn--main{background:linear-gradient(135deg,#fff,#e4def7);color:#1a1033}',
             '.yummy-btn--glass{background:rgba(255,255,255,.14);box-shadow:inset 0 1px 0 rgba(255,255,255,.2)}',
             '.yummy-btn--dim{opacity:.6}',
-            '.yummy-btn.focus,.yummy-btn--glass.focus,.yummy-btn--main.focus,.yummy-opt.focus,.yummy-chip.focus,.yummy-cand.focus,.yummy-tab.focus{background:#fff;color:#120a24;opacity:1;box-shadow:0 .45em 1.3em rgba(0,0,0,.45)}',
+            '.yummy-btn.focus,.yummy-btn--glass.focus,.yummy-btn--main.focus,.yummy-opt.focus,.yummy-chip.focus,.yummy-cand.focus,.yummy-tab.focus{background:#fff;color:#120a24;opacity:1}',
             '.yummy-btn.focus{transform:scale(1.07)}',
-            '.yummy-btn--main.focus{box-shadow:0 0 0 .22em rgba(255,255,255,.28),0 .5em 1.4em rgba(0,0,0,.5)}',
+            '.yummy-btn--main.focus{box-shadow:0 0 0 .22em rgba(255,255,255,.3)}',
             '.yummy-chip--on{background:rgba(139,92,246,.5)}',
             '.yummy-cand{background:rgba(255,255,255,.08)}',
             /* hero */
-            '.yummy-top--poster .yummy-top__bg{opacity:.3;width:100%;filter:none;transform:none}',
-            '.yummy-hero__poster{border-radius:1em}',
-            '.yummy-hero__body{animation:yRise .7s .05s both cubic-bezier(.2,.8,.2,1)}',
-            '.yummy-hero__title{font-weight:700;text-shadow:0 .06em .7em rgba(0,0,0,.5)}',
-            '.yummy-hero__desc{max-width:34em;text-shadow:0 .05em .5em rgba(0,0,0,.6)}',
-            '.yummy-hero__meta{text-shadow:0 .05em .5em rgba(0,0,0,.6)}',
-            /* ряды и сетка: одно левое поле 2em */
+            '.yummy-hero__title{font-weight:700;text-shadow:0 .04em .3em rgba(0,0,0,.45)}',
+            '.yummy-hero__desc{max-width:34em}',
+                        /* ряды и сетка: одно левое поле 2em */
             '.yummy-row__t{font-size:1.45em;margin:0 0 0 1.38em}',
             '.yummy-grid{padding:1.2em 2em 3em}',
-            '.yummy-rows .yummy-row{animation:yFade .6s both}',
-            '.yummy-rows .yummy-row:nth-child(2){animation-delay:.06s}',
-            '.yummy-rows .yummy-row:nth-child(3){animation-delay:.12s}',
-            '.yummy-rows .yummy-row:nth-child(4){animation-delay:.18s}',
-            '.yummy-grid .yummy-card{animation:yFade .45s both}',
             /* карточки */
-            '.yummy-card{width:12em;margin:0 1.2em 1.4em 0;transition:transform .3s cubic-bezier(.2,.8,.2,1)}',
-            '.yummy-card__img{box-shadow:0 .35em 1em rgba(0,0,0,.35);transition:box-shadow .3s}',
+            '.yummy-card{width:12em;margin:0 1.2em 1.4em 0;transition:transform .22s cubic-bezier(.2,.8,.2,1)}',
+            '.yummy-card__img{box-shadow:0 .25em .7em rgba(0,0,0,.3)}',
             '.yummy-card__img:before,.yummy-ep__img:before{content:"";position:absolute;top:0;left:0;right:0;bottom:0;background:linear-gradient(180deg,rgba(0,0,0,0) 55%,rgba(0,0,0,.55) 100%)}',
-            '.yummy-card__img:after,.yummy-ep__img:after{box-shadow:inset 0 0 0 .13em rgba(255,255,255,.92);transition:opacity .25s}',
+            '.yummy-card__img:after,.yummy-ep__img:after{box-shadow:inset 0 0 0 .13em rgba(255,255,255,.92);transition:opacity .15s}',
             '.yummy-card.focus{transform:scale(1.08)}',
-            '.yummy-card.focus .yummy-card__img{box-shadow:0 1em 2.2em rgba(0,0,0,.6)}',
-            '.yummy-card.focus .yummy-card__img:before{background:linear-gradient(135deg,rgba(255,255,255,.24) 0%,rgba(255,255,255,0) 42%),linear-gradient(180deg,rgba(0,0,0,0) 55%,rgba(0,0,0,.55) 100%)}',
-            '.yummy-card__title{opacity:.88;transition:opacity .2s}',
+                        '.yummy-card.focus .yummy-card__img:before{background:linear-gradient(135deg,rgba(255,255,255,.24) 0%,rgba(255,255,255,0) 42%),linear-gradient(180deg,rgba(0,0,0,0) 55%,rgba(0,0,0,.55) 100%)}',
+            '.yummy-card__title{opacity:.9}',
             '.yummy-card.focus .yummy-card__title{opacity:1}',
             '.yummy-card__status{opacity:.5}',
             '.yummy-card__type{background:rgba(15,9,30,.62);border-radius:2em;padding:.18em .7em;font-size:.72em;font-weight:600;letter-spacing:.04em}',
@@ -1349,16 +1336,14 @@
             '.yummy-card .yummy-badge,.yummy-ep .yummy-badge{-webkit-backdrop-filter:none;backdrop-filter:none;background:rgba(15,9,30,.66);border:0;box-shadow:none}',
             /* страница тайтла */
             '.yummy-title__bg{opacity:.22}',
-            '.yummy-title--bd .yummy-title__bg{opacity:.9;left:auto;width:80%;transition:opacity .7s}',
-            '.yummy-info{animation:yRise .6s both cubic-bezier(.2,.8,.2,1)}',
+            '.yummy-title--bd .yummy-title__bg{opacity:.9;left:auto;width:80%}',
             '.yummy-info__poster{border-radius:1em;box-shadow:0 .6em 1.6em rgba(0,0,0,.55)}',
-            '.yummy-info__title{font-weight:700;text-shadow:0 .06em .7em rgba(0,0,0,.5)}',
+            '.yummy-info__title{font-weight:700}',
             /* серии */
-            '.yummy-ep{width:17.5em;margin-right:1.2em;transition:transform .3s cubic-bezier(.2,.8,.2,1)}',
-            '.yummy-ep__img{border-radius:1em;box-shadow:0 .3em .9em rgba(0,0,0,.35);transition:box-shadow .3s}',
+            '.yummy-ep{width:17.5em;margin-right:1.2em;transition:transform .22s cubic-bezier(.2,.8,.2,1)}',
+            '.yummy-ep__img{border-radius:1em;box-shadow:0 .25em .7em rgba(0,0,0,.3)}',
             '.yummy-ep.focus{transform:scale(1.07)}',
-            '.yummy-ep.focus .yummy-ep__img{box-shadow:0 .9em 2em rgba(0,0,0,.6)}',
-            '.yummy-ep__n{text-shadow:0 .05em .4em rgba(0,0,0,.6);z-index:1}',
+                        '.yummy-ep__n{text-shadow:0 .05em .4em rgba(0,0,0,.6);z-index:1}',
             /* адаптация */
             '@media (max-width:900px){.yummy-top__bg{width:100%}.yummy-hero__title{font-size:2.2em}.yummy-hero__body{max-width:100%}.yummy-hello__b{font-size:2em}.yummy-bar-top{display:block}.yummy-tab:first-child{margin-left:0}}',
             '@media (max-width:700px){.yummy-info{flex-direction:column}.yummy-info__poster{margin:0 0 1em}}'
