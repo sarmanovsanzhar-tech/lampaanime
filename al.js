@@ -1,5 +1,5 @@
 /**
- * YummyAnime for Lampa v1.0.0
+ * YummyAnime for Lampa v2.0.0 — redesign in the style of Apple TV
  * Каталог YummyAnime + серии в озвучке AniLibria (HLS 480/720/1080) через встроенный плеер Lampa.
  *
  * Источники:
@@ -14,11 +14,12 @@
     if (window.yummyanime_plugin) return;
     window.yummyanime_plugin = true;
 
-    var VERSION = '1.0.0';
+    var VERSION = '2.0.0';
     var DEF_API = 'https://api.yani.tv';
     var FALLBACK_API = 'https://old.yummyani.me/api';
     var DEF_ANI = 'https://anilibria.top';
-    var PAGE = 24;
+    var PAGE = 24, ROWN = 20;
+    var RC_TTL = 15 * 60e3;
     var TTL = { catalog: 10 * 60e3, search: 10 * 60e3, detail: 60 * 60e3, videos: 30 * 60e3, release: 30 * 60e3 };
 
     /* ------------------------------------------------------------------ */
@@ -76,6 +77,9 @@
             yGet('/anime?limit=' + PAGE + '&offset=' + ((page - 1) * PAGE), o, f);
         }, ok, fail);
     }
+    function yQuery(qs, ok, fail) {
+        cached('yq:' + qs, TTL.catalog, function (o, f) { yGet('/anime?limit=' + ROWN + '&' + qs, o, f); }, ok, fail);
+    }
     function ySearch(q, ok, fail) {
         cached('ys:' + q, TTL.search, function (o, f) {
             yGet('/search?q=' + encodeURIComponent(q) + '&limit=' + PAGE, o, f);
@@ -90,6 +94,9 @@
 
     /* AniLibria */
     function aGet(path, ok, fail) { request(aniBase() + '/api/v1' + path, ok, fail); }
+    function aCached(path, ttl, ok, fail) {
+        cached('ag:' + path, ttl, function (o, f) { aGet(path, o, f); }, ok, fail);
+    }
     function aSearch(q, ok, fail) {
         cached('as:' + q, TTL.search, function (o, f) {
             aGet('/app/search/releases?query=' + encodeURIComponent(q), o, f);
@@ -168,7 +175,7 @@
         if (!rel || !rel.id) return null;
         return {
             id: 'a:' + rel.id, title: rel.ru || rel.en, year: rel.year, type: rel.type, status: '', poster: rel.poster,
-            desc: rel.desc, genres: rel.genres, rating: '', eps: rel.total ? { count: rel.total, aired: 0 } : null,
+            desc: rel.desc, genres: rel.genres, rating: '', age: rel.age, eps: rel.total ? { count: rel.total, aired: 0 } : null,
             titles: uniq([rel.ru, rel.en])
         };
     }
@@ -190,7 +197,9 @@
         if (e.hls_1080) q['1080'] = e.hls_1080;
         if (e.hls_720) q['720'] = e.hls_720;
         if (e.hls_480) q['480'] = e.hls_480;
-        return { num: String(e.ordinal), id: e.id, name: esc(e.name), q: q };
+        var pv = e.preview;
+        var img = pv ? fixUrl(typeof pv === 'string' ? pv : (pv.src || pv.preview || pv.thumbnail || ''), aniBase()) : '';
+        return { num: String(e.ordinal), id: e.id, name: esc(e.name), q: q, img: img };
     }
     function mapRel(r) {
         if (!r) return null;
@@ -199,6 +208,7 @@
             ru: esc(r.name && r.name.main), en: esc(r.name && r.name.english),
             year: parseInt(r.year, 10) || 0,
             total: r.episodes_total || 0,
+            age: esc(r.age_rating && (r.age_rating.label || r.age_rating.value) || ''),
             desc: esc(r.description).replace(/<[^>]+>/g, ''),
             genres: (r.genres || []).map(function (g) { return g && (g.name || g.title) || g; }).filter(Boolean),
             type: esc(r.type && (r.type.description || r.type.value) || ''),
@@ -206,6 +216,16 @@
             episodes: (r.episodes || []).map(mapEp)
         };
         out.episodes.sort(function (a, b) { return parseFloat(a.num) - parseFloat(b.num); });
+        return out;
+    }
+    // достаёт релизы AniLibria из любого ответа (список, {data:[]}, расписание {release:{}})
+    function flatRel(v, out, seen, d) {
+        out = out || []; seen = seen || {}; d = d || 0;
+        if (!v || typeof v !== 'object' || d > 5) return out;
+        if (v.length !== undefined) { v.forEach(function (x) { flatRel(x, out, seen, d + 1); }); return out; }
+        var r = (v.release && v.release.id) ? v.release : ((v.id && v.name && v.name.main) ? v : null);
+        if (r) { if (!seen[r.id]) { seen[r.id] = 1; out.push(r); } return out; }
+        Object.keys(v).forEach(function (k) { flatRel(v[k], out, seen, d + 1); });
         return out;
     }
 
@@ -312,6 +332,10 @@
         return m;
     }
     function hashOf(yid, num) { return Lampa.Utils.hash('yummy:' + yid + ':' + num); }
+    function pct(yid, num) {
+        var tl = Lampa.Timeline.view(hashOf(yid, num));
+        return Math.min(100, Math.round(tl && tl.percent || 0));
+    }
 
     /* ------------------------------------------------------------------ */
     /* Избранное / история                                                 */
@@ -335,30 +359,86 @@
     function matchGet(id) { var m = S('yummy_match', {}); return m && m[id]; }
     function matchSet(id, relId) { var m = S('yummy_match', {}) || {}; m[id] = relId; W('yummy_match', m); }
 
+    /* кэш строк главного экрана (в хранилище, чтобы главная открывалась мгновенно) */
+    function trimItem(it) {
+        return { id: it.id, title: it.title, year: it.year, type: it.type, poster: it.poster, desc: (it.desc || '').slice(0, 320),
+            genres: (it.genres || []).slice(0, 3), rating: it.rating, age: it.age, eps: it.eps };
+    }
+    function rcGet(k) { var m = S('yummy_rc', {}); return m && m[k]; }
+    function rcSet(k, list) { var m = S('yummy_rc', {}) || {}; m[k] = { t: Date.now(), list: list.map(trimItem) }; W('yummy_rc', m); }
+
+    /* ------------------------------------------------------------------ */
+    /* Подборки главного экрана                                            */
+    /* ------------------------------------------------------------------ */
+    var ROWS = [['hist', 'Продолжить просмотр'], ['pop', 'Популярное аниме'], ['new', 'Новинки'], ['air', 'Сейчас выходит'], ['rec', 'Рекомендуем'], ['upd', 'Последние обновления']];
+
+    function aniTries(k) {
+        var L = ROWN, c = '/anime/catalog/releases?limit=' + L + '&page=1';
+        function p(path) { return function (ok, fail) { aCached(path, TTL.catalog, ok, fail); }; }
+        var by = function (s) { return p(c + '&f%5Bsorting%5D=' + s); };
+        var plain = function (page) { return function (ok, fail) { aCatalog(page, ok, fail); }; };
+        if (k === 'pop') return [by('RATING_DESC'), plain(1)];
+        if (k === 'new') return [by('YEAR_DESC'), plain(2)];
+        if (k === 'air') return [p('/anime/schedule/now'), p(c + '&f%5BpublishStatuses%5D=IS_ONGOING')];
+        if (k === 'rec') return [p('/anime/releases/recommended?limit=' + L), plain(3)];
+        return [p('/anime/releases/latest?limit=' + L), by('FRESH_AT_DESC')];
+    }
+    function yTries(k) {
+        var plain = function (page) { return function (ok, fail) { yCatalog(page, ok, fail); }; };
+        var q = function (s) { return function (ok, fail) { yQuery(s, ok, fail); }; };
+        if (k === 'pop') return [q('sort=rating&sort_forward=false'), plain(1)];
+        if (k === 'new') return [q('sort=year&sort_forward=false'), plain(2)];
+        if (k === 'air') return [q('anime_status=ongoing')];
+        if (k === 'rec') return [q('sort=views&sort_forward=false'), plain(3)];
+        return [plain(1)];
+    }
+    function rowFetch(ani, k, ok, fail) {
+        var tries = ani ? aniTries(k) : yTries(k), i = 0;
+        (function next() {
+            if (i >= tries.length) return fail();
+            tries[i++](function (res) {
+                var list = ani ? flatRel(res).map(mapA) : (res && res.length !== undefined ? res : (res && res.data) || []).map(mapY);
+                list = list.filter(Boolean).slice(0, ROWN);
+                if (list.length) ok(list); else next();
+            }, next);
+        })();
+    }
+
     /* ------------------------------------------------------------------ */
     /* Компонент                                                           */
     /* ------------------------------------------------------------------ */
+    var PLAY = '<svg viewBox="0 0 24 24" width="1em" height="1em" style="vertical-align:-.12em;margin-right:.45em"><path d="M7 4.5v15l13-7.5z" fill="currentColor"/></svg>';
+
     function Component(object) {
         var self = this;
         var scroll = new Lampa.Scroll({ mask: true, over: true, step: 250 });
         var root = $('<div class="yummy"></div>');
-        var last = false, destroyed = false;
+        var last = false, destroyed = false, timer = 0, gen = 0;
+        var rowScroll = {}, HM = {};
         var mode = object.mode || 'home';
+        if (String(S('yummy_glass', 'on')) === 'off') root.addClass('yummy--flat');
 
-        /* общие утилиты */
-        function setLast(e) { last = e.target; scroll.update($(e.target), true); }
-        function selectable(el) { el.on('hover:focus', setLast); return el; }
+        function loadHM() { HM = {}; arr('yummy_hist').forEach(function (h) { HM[h.id] = h; }); }
+        function sel(el, rs, wrap, top) {
+            el.on('hover:focus', function (e) {
+                last = e.target;
+                if (rs) rs.update($(e.target), true);
+                scroll.update(top || wrap || $(e.target), true);
+            });
+            return el;
+        }
+        function kill(rs) { try { rs && rs.destroy(); } catch (e) {} }
         function msg(text, retry, retryLabel) {
-            var box = $('<div class="yummy-msg"></div>');
+            var box = $('<div class="yummy-msg yummy-glass"></div>');
             box.append($('<div class="yummy-msg__text"></div>').text(text));
             if (retry) {
-                var b = selectable($('<div class="yummy-btn selector"></div>').text(retryLabel || 'Повторить'));
+                var b = sel($('<div class="yummy-btn yummy-btn--glass selector"></div>').text(retryLabel || 'Повторить'));
                 b.on('hover:enter', retry);
                 box.append(b);
             }
             return box;
         }
-        function refresh() {
+        function doRefresh() {
             if (destroyed) return;
             if (last && !$.contains(document.documentElement, last)) last = false;
             self.activity.loader(false);
@@ -369,74 +449,187 @@
                 Lampa.Controller.toggle('content');
             }
         }
-        function openTitle(item) {
-            Lampa.Activity.push({ url: '', title: item.title, component: 'yummy_anime', mode: 'title', item: item, page: 1 });
+        function refresh(now) { clearTimeout(timer); if (now) doRefresh(); else timer = setTimeout(doRefresh, 40); }
+        function openTitle(item, auto) {
+            Lampa.Activity.push({ url: '', title: item.title, component: 'yummy_anime', mode: 'title', item: item, autoplay: !!auto, page: 1 });
         }
-        function card(item, sub) {
+        function chip(t, active) {
+            return $('<div class="yummy-chip selector"></div>').text(t).toggleClass('yummy-chip--on', !!active);
+        }
+
+        /* ---------- карточка ---------- */
+        function card(item, o) {
+            o = o || {};
+            var h = HM[item.id];
+            var sub = o.sub !== undefined ? o.sub : [item.year || '', item.type].filter(Boolean).join(' • ');
             var c = $('<div class="yummy-card selector"><div class="yummy-card__img"></div><div class="yummy-card__title"></div><div class="yummy-card__sub"></div></div>');
-            if (item.poster) c.find('.yummy-card__img').css('background-image', 'url("' + item.poster + '")');
+            var img = c.find('.yummy-card__img');
+            if (item.poster) img.css('background-image', 'url("' + item.poster + '")');
             c.find('.yummy-card__title').text(item.title);
-            c.find('.yummy-card__sub').text(sub || [item.year || '', item.type].filter(Boolean).join(' • '));
-            selectable(c);
+            c.find('.yummy-card__sub').text(sub);
+            if (h) {
+                img.append($('<div class="yummy-badge yummy-glass"></div>').text('Серия ' + h.ep));
+                var p = pct(item.id, h.ep);
+                if (p > 0) img.append($('<div class="yummy-bar"><i></i></div>').find('i').css('width', p + '%').end());
+            }
+            sel(c, o.rs, o.wrap);
             c.on('hover:enter', function () { openTitle(compact(item)); });
             return c;
         }
 
         /* ============================ HOME ============================= */
-        var tabsEl, gridEl, state = { page: 0, loading: false, ended: false };
-        var TABS = [['catalog', 'Каталог'], ['search', 'Поиск'], ['fav', 'Избранное'], ['hist', 'История']];
+        var topEl, barEl, heroWrap, rowsEl, gridEl, state = { page: 0, loading: false, ended: false };
+        var TABS = [['home', 'Главная'], ['catalog', 'Каталог'], ['search', 'Поиск'], ['fav', 'Избранное'], ['hist', 'История']];
 
         function buildHome() {
-            object.tab = object.tab || 'catalog';
-            tabsEl = $('<div class="yummy-tabs"></div>');
+            object.tab = object.tab || 'home';
+            topEl = $('<div class="yummy-top"></div>');
+            barEl = $('<div class="yummy-bar-top"></div>');
+            barEl.append('<div class="yummy-hello"><span class="yummy-hello__a">Добро пожаловать в мир аниме,</span><span class="yummy-hello__b"><i>господин Санжар</i></span></div>');
+            var tabs = $('<div class="yummy-tabs"></div>');
             TABS.forEach(function (t) {
-                var el = selectable($('<div class="yummy-tab selector"></div>').text(t[1]).attr('data-tab', t[0]));
+                var el = sel($('<div class="yummy-tab yummy-glass selector"></div>').text(t[1]).attr('data-tab', t[0]), null, null, topEl);
                 el.on('hover:enter', function () { switchTab(t[0]); });
-                tabsEl.append(el);
+                tabs.append(el);
             });
+            barEl.append(tabs);
+            heroWrap = $('<div class="yummy-herowrap"></div>');
+            topEl.append(barEl).append(heroWrap);
+            rowsEl = $('<div class="yummy-rows"></div>');
             gridEl = $('<div class="yummy-grid"></div>');
-            scroll.append(tabsEl);
+            scroll.append(topEl);
+            scroll.append(rowsEl);
             scroll.append(gridEl);
             scroll.onEnd = function () { if (object.tab === 'catalog' || object.tab === 'search') loadMore(); };
             switchTab(object.tab, true);
         }
         function markTabs() {
-            tabsEl.find('.yummy-tab').each(function () {
+            barEl.find('.yummy-tab').each(function () {
                 $(this).toggleClass('yummy-tab--active', $(this).attr('data-tab') === object.tab);
             });
         }
+        function clearRows() {
+            Object.keys(rowScroll).forEach(function (k) { kill(rowScroll[k]); });
+            rowScroll = {};
+        }
         function switchTab(tab, initial) {
             object.tab = tab;
+            gen++;
             markTabs();
-            gridEl.empty();
+            clearRows();
+            gridEl.empty(); rowsEl.empty(); heroWrap.empty();
+            last = false;
+            try { scroll.reset && scroll.reset(); } catch (e) {}
             state = { page: 0, loading: false, ended: false };
-            if (tab === 'catalog') loadMore();
+            loadHM();
+            if (tab === 'home') buildRows();
+            else if (tab === 'catalog') loadMore();
             else if (tab === 'search') {
                 if (object.query) { searchHeader(); loadMore(); }
                 else askQuery();
             }
             else if (tab === 'fav') renderStored(arr('yummy_fav'), 'Избранное пусто. Добавляйте тайтлы кнопкой на странице аниме.');
-            else if (tab === 'hist') {
-                var h = arr('yummy_hist');
-                renderStored(h, 'История пуста.', function (x) { return 'Серия ' + x.ep; });
-            }
+            else if (tab === 'hist') renderStored(arr('yummy_hist'), 'История пуста.', function (x) { return 'Серия ' + x.ep; });
         }
+
+        /* --- главная: Hero + подборки --- */
+        var rowEls = {}, heroDone = false, pending = 0, shown = 0;
+        function buildRows() {
+            heroDone = false; pending = 0; shown = 0;
+            heroWrap.append('<div class="yummy-hero yummy-hero--ghost"></div>');
+            ROWS.forEach(function (r) {
+                rowEls[r[0]] = $('<div class="yummy-row"></div>').hide();
+                rowsEl.append(rowEls[r[0]]);
+            });
+            renderHist();
+            var ani = srcAni(), g = gen;
+            ROWS.slice(1).forEach(function (r) { pending++; loadRow(ani, r, g); });
+        }
+        function loadRow(ani, r, g) {
+            var key = r[0], ck = (ani ? 'a' : 'y') + ':' + key, c = rcGet(ck);
+            if (c && c.list && c.list.length && Date.now() - c.t < RC_TTL) return showRow(r, c.list, g);
+            rowFetch(ani, key, function (list) {
+                rcSet(ck, list);
+                showRow(r, list, g);
+            }, function () {
+                if (c && c.list && c.list.length) return showRow(r, c.list, g);
+                showRow(r, [], g);
+            });
+        }
+        function showRow(r, list, g) {
+            if (destroyed || g !== gen) return;
+            pending--;
+            if (list.length) {
+                shown++;
+                if (!heroDone) { heroDone = true; renderHero(list); }
+                fillRow(r[0], r[1], list);
+            }
+            if (!pending && !shown && !arr('yummy_hist').length) {
+                heroWrap.empty();
+                rowsEl.append(msg('Не удалось загрузить подборки (' + (srcAni() ? 'AniLibria' : 'YummyAnime') + '). Проверьте сеть или смените источник в настройках плагина.', function () { switchTab('home'); }));
+            }
+            refresh();
+        }
+        function fillRow(key, title, list) {
+            var wrap = rowEls[key];
+            kill(rowScroll[key]);
+            var rs = new Lampa.Scroll({ horizontal: true, step: 300 });
+            rowScroll[key] = rs;
+            wrap.empty().append($('<div class="yummy-row__t"></div>').text(title));
+            list.forEach(function (it) { rs.append(card(it, { rs: rs, wrap: wrap })); });
+            wrap.append(rs.render()).show();
+        }
+        function renderHist() {
+            var h = arr('yummy_hist').slice(0, ROWN);
+            if (!h.length) { kill(rowScroll.hist); delete rowScroll.hist; rowEls.hist && rowEls.hist.empty().hide(); return; }
+            loadHM();
+            fillRow('hist', ROWS[0][1], h.map(function (x) { return x; }));
+        }
+        function heroBtns(el, item) {
+            var play = sel($('<div class="yummy-btn yummy-btn--main selector"></div>').html(PLAY + 'Смотреть'), null, null, topEl);
+            play.on('hover:enter', function () { openTitle(compact(item), true); });
+            var fav = sel($('<div class="yummy-btn yummy-btn--glass yummy-glass selector"></div>'), null, null, topEl);
+            function lab() { fav.text(isFav(item.id) ? '✓ В избранном' : '+ В избранное'); }
+            lab();
+            fav.on('hover:enter', function () {
+                var on = toggleFav(item);
+                Lampa.Noty.show(on ? 'Добавлено в избранное' : 'Убрано из избранного');
+                lab();
+            });
+            el.append(play).append(fav);
+        }
+        function renderHero(list) {
+            var pool = list.filter(function (i) { return i.poster; }).slice(0, 5);
+            if (!pool.length) { heroWrap.empty(); return; }
+            var it = pool[Math.floor(Math.random() * pool.length)];
+            var el = $('<div class="yummy-hero"><div class="yummy-hero__bg"></div><div class="yummy-hero__sh"></div><div class="yummy-hero__body"><div class="yummy-hero__kick">Рекомендуем</div><div class="yummy-hero__title"></div><div class="yummy-chips"></div><div class="yummy-hero__desc"></div><div class="yummy-hero__btns"></div></div></div>');
+            el.find('.yummy-hero__bg').css('background-image', 'url("' + it.poster + '")');
+            el.find('.yummy-hero__title').text(it.title);
+            var chips = el.find('.yummy-chips');
+            var meta = [it.year || '', (it.genres || []).slice(0, 2).join(', '), it.rating ? '★ ' + it.rating : '', it.age, it.eps && (it.eps.count || it.eps.aired) ? (it.eps.count || it.eps.aired) + ' эп.' : ''].filter(Boolean);
+            meta.forEach(function (m) { chips.append($('<span class="yummy-pill yummy-glass"></span>').text(m)); });
+            el.find('.yummy-hero__desc').text(it.desc || '');
+            heroBtns(el.find('.yummy-hero__btns'), it);
+            heroWrap.empty().append(el);
+        }
+
+        /* --- списки / поиск / каталог --- */
         function renderStored(list, emptyText, subFn) {
             gridEl.empty();
             if (!list.length) gridEl.append(msg(emptyText));
-            list.forEach(function (x) { gridEl.append(card(x, subFn ? subFn(x) : '')); });
-            refresh();
+            list.forEach(function (x) { gridEl.append(card(x, { sub: subFn ? subFn(x) : '' })); });
+            refresh(true);
         }
         function searchHeader() {
-            var b = selectable($('<div class="yummy-btn selector yummy-btn--wide"></div>').text('Запрос: «' + object.query + '» — изменить'));
+            var b = sel($('<div class="yummy-btn yummy-btn--glass yummy-glass yummy-btn--wide selector"></div>').text('Запрос: «' + object.query + '» — изменить'));
             b.on('hover:enter', askQuery);
-            gridEl.empty().append($('<div class="yummy-row"></div>').append(b));
+            gridEl.empty().append($('<div class="yummy-wide"></div>').append(b));
         }
         function askQuery() {
             Lampa.Input.edit({ free: true, title: 'Поиск аниме', nosave: true, value: object.query || '' }, function (val) {
                 Lampa.Controller.toggle('content');
                 val = esc(val).trim();
-                if (!val) return refresh();
+                if (!val) return refresh(true);
                 object.query = val;
                 state = { page: 0, loading: false, ended: false };
                 searchHeader();
@@ -449,13 +642,13 @@
             var page = state.page + 1, tab = object.tab;
             if (page === 1) self.activity.loader(true);
             var ani = srcAni();
-            var fn = tab === 'search' ? function (ok, fail) { (ani ? aSearch : ySearch)(object.query, ok, fail); }
-                : function (ok, fail) { (ani ? aCatalog : yCatalog)(page, ok, fail); };
+            var fn = tab === 'search' ? function (ok, fail) { if (ani) aSearch(object.query, ok, fail); else ySearch(object.query, ok, fail); }
+                : function (ok, fail) { if (ani) aCatalog(page, ok, fail); else yCatalog(page, ok, fail); };
             fn(function (res) {
                 if (destroyed || tab !== object.tab) return;
                 state.loading = false;
                 var list = (res && res.length !== undefined ? res : (res && res.data) || []).map(ani ? mapA : mapY).filter(Boolean);
-                if (tab === 'search') state.ended = true; // поиск отдаёт одну страницу
+                if (tab === 'search') state.ended = true;
                 if (!list.length) {
                     state.ended = true;
                     if (page === 1) gridEl.append(msg('Ничего не найдено.'));
@@ -477,15 +670,22 @@
         }
 
         /* ============================ TITLE ============================ */
-        var T = { y: null, rel: null, yeps: null, cands: [], status: 'matching', played: false };
-        var headEl, listEl, btnPlay, btnFav;
+        var T = { y: null, rel: null, yeps: null, cands: [], status: 'matching', played: false, fr: null };
+        var titleEl, headEl, voiceEl, seasonEl, epsEl, btnPlay, btnFav, auto = false;
 
         function buildTitle() {
             T.y = object.item;
+            auto = !!object.autoplay;
+            titleEl = $('<div class="yummy-title"><div class="yummy-title__bg"></div><div class="yummy-title__sh"></div></div>');
             headEl = $('<div class="yummy-head"></div>');
-            listEl = $('<div class="yummy-list"></div>');
-            scroll.append(headEl);
-            scroll.append(listEl);
+            titleEl.append(headEl);
+            voiceEl = $('<div class="yummy-block"></div>');
+            seasonEl = $('<div class="yummy-row"></div>');
+            epsEl = $('<div class="yummy-row"></div>');
+            scroll.append(titleEl);
+            scroll.append(voiceEl);
+            scroll.append(seasonEl);
+            scroll.append(epsEl);
             renderHead();
             self.activity.loader(true);
             if (isAniId(T.y.id)) return startMatch();
@@ -502,23 +702,26 @@
                 var nums = {};
                 (v && v.length !== undefined ? v : []).forEach(function (x) { if (x && x.number != null) nums[String(x.number)] = 1; });
                 T.yeps = Object.keys(nums);
-                renderList();
+                renderBlocks();
             }, function () { T.yeps = []; });
         }
         function renderHead() {
             var y = T.y;
             headEl.empty();
-            var meta = [y.year || '', y.type, y.status, y.eps && (y.eps.aired || y.eps.count) ? (y.eps.aired || y.eps.count) + ' эп.' : '', y.rating ? '★ ' + y.rating : ''].filter(Boolean).join(' • ');
-            var el = $('<div class="yummy-info"><div class="yummy-info__poster"></div><div class="yummy-info__body"><div class="yummy-info__title"></div><div class="yummy-info__orig"></div><div class="yummy-info__meta"></div><div class="yummy-info__genres"></div><div class="yummy-info__desc"></div><div class="yummy-info__btns"></div></div></div>');
+            titleEl.find('.yummy-title__bg').css('background-image', y.poster ? 'url("' + y.poster + '")' : 'none');
+            var n = y.eps && (y.eps.aired || y.eps.count) || (T.rel && T.rel.total) || 0;
+            var meta = [y.year || '', y.type, y.status, n ? n + ' эп.' : '', y.rating ? '★ ' + y.rating : '', y.age || (T.rel && T.rel.age) || ''].filter(Boolean);
+            var el = $('<div class="yummy-info"><div class="yummy-info__poster"></div><div class="yummy-info__body"><div class="yummy-info__title"></div><div class="yummy-info__orig"></div><div class="yummy-chips"></div><div class="yummy-info__genres"></div><div class="yummy-info__desc"></div><div class="yummy-info__btns"></div></div></div>');
             if (y.poster) el.find('.yummy-info__poster').css('background-image', 'url("' + y.poster + '")');
             el.find('.yummy-info__title').text(y.title);
             el.find('.yummy-info__orig').text((y.titles || []).filter(function (t) { return norm(t) !== norm(y.title); }).slice(0, 2).join(' / '));
-            el.find('.yummy-info__meta').text(meta);
-            el.find('.yummy-info__genres').text((y.genres || []).join(', '));
+            var chips = el.find('.yummy-chips');
+            meta.forEach(function (m) { chips.append($('<span class="yummy-pill yummy-glass"></span>').text(m)); });
+            el.find('.yummy-info__genres').text((y.genres || []).join(' · '));
             el.find('.yummy-info__desc').text(y.desc || '');
-            btnPlay = selectable($('<div class="yummy-btn selector yummy-btn--main"></div>'));
-            btnPlay.on('hover:enter', function () { var n = continueNum(); if (n) play(n); else Lampa.Noty.show('Нет доступных серий'); });
-            btnFav = selectable($('<div class="yummy-btn selector"></div>'));
+            btnPlay = sel($('<div class="yummy-btn yummy-btn--main selector"></div>'), null, null, titleEl);
+            btnPlay.on('hover:enter', function () { var k = continueNum(); if (k) play(k); else Lampa.Noty.show('Нет доступных серий'); });
+            btnFav = sel($('<div class="yummy-btn yummy-btn--glass yummy-glass selector"></div>'), null, null, titleEl);
             btnFav.on('hover:enter', function () {
                 var on = toggleFav(T.y);
                 Lampa.Noty.show(on ? 'Добавлено в избранное' : 'Убрано из избранного');
@@ -531,36 +734,35 @@
         }
         function playable(e) { return e && pickUrl(e.q); }
         function epByNum(num) { var l = T.rel ? T.rel.episodes : []; for (var i = 0; i < l.length; i++) if (l[i].num === String(num)) return l[i]; return null; }
+        function lastWatched(eps) {
+            var idx = -1, p = 0;
+            eps.forEach(function (e, i) { var v = pct(T.y.id, e.num); if (v > 0) { idx = i; p = v; } });
+            return idx < 0 ? null : { i: idx, p: p };
+        }
         function continueNum() {
             if (!T.rel) return '';
             var eps = T.rel.episodes.filter(playable);
             if (!eps.length) return '';
-            var h = histGet(T.y.id);
-            if (h) {
-                var cur = epByNum(h.ep);
-                if (cur) {
-                    var tl = Lampa.Timeline.view(hashOf(T.y.id, cur.num));
-                    if (tl && tl.percent >= 90) {
-                        var idx = eps.indexOf(cur);
-                        if (idx > -1 && eps[idx + 1]) return eps[idx + 1].num;
-                    }
-                    if (playable(cur)) return cur.num;
-                }
-            }
+            var w = lastWatched(eps);
+            if (w) return (w.p >= 90 && eps[w.i + 1]) ? eps[w.i + 1].num : eps[w.i].num;
+            var h = histGet(T.y.id), cur = h && epByNum(h.ep);
+            if (cur && playable(cur)) return cur.num;
             return eps[0].num;
         }
         function updateButtons() {
             if (!btnPlay) return;
             var n = T.status === 'ok' ? continueNum() : '';
-            var h = histGet(T.y.id);
-            btnPlay.text(!n ? 'Смотреть (ищем серии…)' : (h && String(h.ep) === String(n) ? 'Продолжить: серия ' + n : (h ? 'Дальше: серия ' + n : 'Смотреть: серия ' + n)));
-            btnFav.text(isFav(T.y.id) ? '★ В избранном' : '☆ В избранное');
+            var eps = T.rel ? T.rel.episodes.filter(playable) : [], w = n && lastWatched(eps);
+            var label = !n ? 'Смотреть' : (!w ? 'Смотреть, серия ' + n : (w.p < 90 || String(eps[w.i].num) === String(n) ? 'Продолжить, серия ' + n : 'Дальше, серия ' + n));
+            btnPlay.html(PLAY).append(document.createTextNode(label));
+            btnPlay.toggleClass('yummy-btn--dim', !n);
+            btnFav.text(isFav(T.y.id) ? '✓ В избранном' : '+ В избранное');
         }
 
         /* ---- сопоставление с AniLibria ---- */
         function startMatch() {
             T.status = 'matching'; T.rel = null;
-            renderList();
+            renderBlocks();
             if (isAniId(T.y.id)) return loadRelease(String(T.y.id).slice(2));
             var stored = matchGet(T.y.id);
             if (stored) return loadRelease(stored, function () { stored = null; findAuto(); });
@@ -569,33 +771,40 @@
         function findAuto() {
             findReleases(T.y, function (err, list) {
                 if (destroyed) return;
-                if (err) { T.status = 'error'; return renderList(); }
+                if (err) { T.status = 'error'; self.activity.loader(false); return renderBlocks(); }
                 T.cands = list;
                 var pick = autoPick(list);
                 if (pick) { matchSet(T.y.id, pick.rel.id); return loadRelease(pick.rel.id); }
                 T.status = list.length ? 'choose' : 'nomatch';
                 self.activity.loader(false);
-                renderList();
+                renderBlocks();
             });
         }
         function loadRelease(id, onFail) {
-            T.status = 'matching'; renderList();
+            T.status = 'matching'; T.fr = null; renderBlocks();
             aRelease(id, function (r) {
                 if (destroyed) return;
                 T.rel = mapRel(r);
                 T.status = T.rel && T.rel.episodes.length ? 'ok' : 'noeps';
                 if (T.rel && isAniId(T.y.id)) {
-                    T.y = mergeY(T.y, { desc: T.rel.desc, genres: T.rel.genres, type: T.rel.type, poster: T.rel.poster, year: T.rel.year });
-                    renderHead();
+                    T.y = mergeY(T.y, { desc: T.rel.desc, genres: T.rel.genres, type: T.rel.type, poster: T.rel.poster, year: T.rel.year, age: T.rel.age });
                 }
-                if (T.rel && T.rel.ru && !/[а-яё]/i.test(T.y.title)) { T.y.title = T.rel.ru; renderHead(); }
+                if (T.rel && T.rel.ru && !/[а-яё]/i.test(T.y.title)) T.y.title = T.rel.ru;
+                renderHead();
                 self.activity.loader(false);
-                renderList(); updateButtons();
+                renderBlocks();
+                if (T.status === 'ok') { loadSeasons(); maybeAuto(); }
             }, function () {
                 if (destroyed) return;
                 if (onFail) return onFail();
-                T.status = 'error'; self.activity.loader(false); renderList();
+                T.status = 'error'; self.activity.loader(false); renderBlocks();
             });
+        }
+        function maybeAuto() {
+            if (!auto) return;
+            auto = false;
+            var n = continueNum();
+            if (n) play(n);
         }
         function chooseRelease(c) {
             matchSet(T.y.id, c.rel.id);
@@ -611,11 +820,11 @@
                     var items = (res && res.length !== undefined ? res : (res && res.data) || []).map(mapRel).filter(Boolean);
                     T.cands = items.map(function (r) { return { rel: r, score: score(T.y, r) }; }).sort(function (a, b) { return b.score - a.score; });
                     T.status = T.cands.length ? 'choose' : 'nomatch';
-                    renderList();
-                }, function () { T.status = 'error'; renderList(); });
+                    renderBlocks();
+                }, function () { T.status = 'error'; renderBlocks(); });
             });
         }
-        function changeRelease() {
+        function pickDialog() {
             var items = T.cands.slice(0, 10).map(function (c) {
                 return { title: c.rel.ru + (c.rel.year ? ' (' + c.rel.year + ')' : ''), subtitle: c.rel.en, cand: c };
             });
@@ -631,71 +840,157 @@
                 onBack: function () { Lampa.Controller.toggle('content'); }
             });
         }
+        function changeRelease() {
+            if (T.cands.length) return pickDialog();
+            Lampa.Noty.show('Ищем варианты озвучки…');
+            findReleases(T.y, function (err, list) { T.cands = list || []; pickDialog(); });
+        }
 
-        /* ---- список серий ---- */
-        function renderList() {
-            if (destroyed || !listEl) return;
-            listEl.empty();
-            var rel = T.rel;
-            if (T.status === 'matching') return listEl.append(msg('Ищем релиз в AniLibria…'));
-            if (T.status === 'error') return listEl.append(msg('AniLibria недоступна (сеть/блокировка). В браузерной версии Lampa может понадобиться CORS-прокси в настройках плагина.', startMatch)), refresh();
-            if (T.status === 'nomatch') {
-                listEl.append(msg('Релиз в AniLibria не найден.'));
-                var m = selectable($('<div class="yummy-btn selector"></div>').text('Искать релиз вручную'));
+        /* ---- сезоны (франшиза AniLibria) ---- */
+        function parseFranchise(res) {
+            var f = res;
+            if (f && f.length !== undefined && f[0] && f[0].franchise_releases) f = f[0];
+            var list = (f && f.franchise_releases) || (f && f.length !== undefined ? f : []) || [];
+            return list.map(function (x) {
+                var r = x.release || x, nm = r.name;
+                if (nm && typeof nm === 'object') nm = nm.main;
+                if (!nm) { nm = x.name; if (nm && typeof nm === 'object') nm = nm.main; }
+                return { id: r.id || x.release_id, name: esc(nm), year: parseInt(r.year || x.year, 10) || 0 };
+            }).filter(function (x) { return x.id && x.name; });
+        }
+        function loadSeasons() {
+            if (T.fr !== null || !T.rel) return;
+            T.fr = [];
+            var rid = T.rel.id;
+            aCached('/anime/franchises/release/' + encodeURIComponent(rid), TTL.detail, function (res) {
+                if (destroyed || !T.rel || T.rel.id !== rid) return;
+                T.fr = parseFranchise(res);
+                renderSeasons(); refresh();
+            }, function () {});
+        }
+
+        /* ---- блоки: озвучка, сезоны, серии ---- */
+        function renderBlocks() {
+            if (destroyed || !voiceEl) return;
+            renderVoice();
+            renderSeasons();
+            renderEps();
+            updateButtons();
+            refresh();
+        }
+        var seasonRS, epsRS;
+        function renderVoice() {
+            voiceEl.empty();
+            var rel = T.rel, st = T.status;
+            if (st === 'matching') return voiceEl.append(msg('Ищем релиз в AniLibria…'));
+            if (st === 'error') return voiceEl.append(msg('AniLibria недоступна (сеть/блокировка). В браузерной версии Lampa может понадобиться CORS-прокси в настройках плагина.', startMatch));
+            if (st === 'nomatch') {
+                voiceEl.append(msg('Релиз в AniLibria не найден.'));
+                var m = sel($('<div class="yummy-btn yummy-btn--glass yummy-glass selector"></div>').text('Искать релиз вручную'), null, null, voiceEl);
                 m.on('hover:enter', manualSearch);
-                listEl.append(m);
-                return refresh();
+                return voiceEl.append(m);
             }
-            if (T.status === 'choose') {
-                listEl.append($('<div class="yummy-section"></div>').text('Выберите релиз AniLibria'));
-                T.cands.slice(0, 8).forEach(function (c) {
-                    var row = selectable($('<div class="yummy-cand selector"></div>'));
+            if (st === 'choose') {
+                var p = $('<div class="yummy-panel yummy-glass"></div>');
+                p.append($('<div class="yummy-panel__t"></div>').text('Выберите релиз AniLibria'));
+                T.cands.slice(0, 6).forEach(function (c) {
+                    var row = sel($('<div class="yummy-cand selector"></div>'), null, null, voiceEl);
                     row.append($('<div class="yummy-cand__t"></div>').text(c.rel.ru + (c.rel.year ? ' (' + c.rel.year + ')' : '')));
                     row.append($('<div class="yummy-cand__s"></div>').text(c.rel.en));
                     row.on('hover:enter', function () { chooseRelease(c); });
-                    listEl.append(row);
+                    p.append(row);
                 });
-                var mm = selectable($('<div class="yummy-btn selector"></div>').text('Искать вручную'));
+                var mm = sel($('<div class="yummy-btn yummy-btn--glass selector"></div>').text('Искать вручную'), null, null, voiceEl);
                 mm.on('hover:enter', manualSearch);
-                listEl.append(mm);
-                return refresh();
+                return voiceEl.append(p.append(mm));
             }
-            if (T.status === 'noeps') {
-                listEl.append(msg('В релизе AniLibria «' + rel.ru + '» пока нет доступных серий.'));
-                var c2 = selectable($('<div class="yummy-btn selector"></div>').text('Сменить релиз'));
+            if (st === 'noeps') {
+                voiceEl.append(msg('В релизе AniLibria «' + rel.ru + '» пока нет доступных серий.'));
+                var c2 = sel($('<div class="yummy-btn yummy-btn--glass yummy-glass selector"></div>').text('Сменить релиз'), null, null, voiceEl);
                 c2.on('hover:enter', changeRelease);
-                listEl.append(c2);
-                return refresh();
+                return voiceEl.append(c2);
             }
-
-            // status ok
-            var voice = selectable($('<div class="yummy-voice selector"></div>'));
-            voice.append($('<div class="yummy-voice__t"></div>').text('Озвучка: AniLibria'));
-            voice.append($('<div class="yummy-voice__s"></div>').text('Релиз: ' + rel.ru + (rel.year ? ' (' + rel.year + ')' : '') + ' — нажмите, чтобы сменить'));
-            voice.on('hover:enter', changeRelease);
-            listEl.append(voice);
-
-            var nums = {}, order = [];
+            // ok
+            var panel = $('<div class="yummy-panel yummy-glass"></div>');
+            panel.append($('<div class="yummy-panel__t"></div>').text('Озвучка'));
+            panel.append($('<div class="yummy-panel__s"></div>').text('AniLibria · ' + rel.ru + (rel.year ? ' (' + rel.year + ')' : '')));
+            var rv = $('<div class="yummy-chiprow"></div>');
+            rv.append(sel(chip('● ' + (rel.ru || 'AniLibria'), true), null, null, voiceEl));
+            T.cands.filter(function (c) { return c.rel.id !== rel.id; }).slice(0, 3).forEach(function (c) {
+                var el = sel(chip(c.rel.ru + (c.rel.year ? ' (' + c.rel.year + ')' : '')), null, null, voiceEl);
+                el.on('hover:enter', function () { chooseRelease(c); });
+                rv.append(el);
+            });
+            var more = sel(chip('Другие релизы…'), null, null, voiceEl);
+            more.on('hover:enter', changeRelease);
+            rv.append(more);
+            panel.append(rv);
+            var avail = {};
+            rel.episodes.forEach(function (e) { Object.keys(e.q).forEach(function (k) { avail[k] = 1; }); });
+            var qs = ['1080', '720', '480'].filter(function (k) { return avail[k]; });
+            if (qs.length) {
+                var cur = String(S('yummy_quality', '1080'));
+                if (!avail[cur]) cur = qs[0];
+                var rq = $('<div class="yummy-chiprow"></div>').append($('<span class="yummy-chiplabel"></span>').text('Качество'));
+                qs.forEach(function (k) {
+                    var el = sel(chip(k + 'p', k === cur), null, null, voiceEl);
+                    el.on('hover:enter', function () { W('yummy_quality', k); renderVoice(); renderEps(); updateButtons(); refresh(true); });
+                    rq.append(el);
+                });
+                panel.append(rq);
+            }
+            voiceEl.append(panel);
+        }
+        function renderSeasons() {
+            kill(seasonRS); seasonRS = null;
+            seasonEl.empty();
+            if (T.status !== 'ok' || !T.fr || T.fr.length < 2) return;
+            seasonEl.append($('<div class="yummy-row__t"></div>').text('Сезоны и части'));
+            var rs = seasonRS = new Lampa.Scroll({ horizontal: true, step: 300 });
+            T.fr.forEach(function (f) {
+                var on = T.rel && String(f.id) === String(T.rel.id);
+                var el = sel(chip(f.name + (f.year ? ' · ' + f.year : ''), on).addClass('yummy-chip--season'), rs, seasonEl);
+                el.on('hover:enter', function () {
+                    if (on) return Lampa.Noty.show('Этот сезон уже открыт');
+                    openTitle({ id: 'a:' + f.id, title: f.name, year: f.year, type: '', poster: '' });
+                });
+                rs.append(el);
+            });
+            seasonEl.append(rs.render());
+        }
+        function renderEps() {
+            kill(epsRS); epsRS = null;
+            epsEl.empty();
+            if (T.status !== 'ok') return;
+            var rel = T.rel;
+            var nums = {}, order;
             rel.episodes.forEach(function (e) { nums[e.num] = { num: e.num, a: e }; });
             (T.yeps || []).forEach(function (n) { if (!nums[n]) nums[n] = { num: n, a: null }; });
             order = Object.keys(nums).sort(function (a, b) { return parseFloat(a) - parseFloat(b); });
-
+            epsEl.append($('<div class="yummy-row__t"></div>').text('Серии · ' + order.length));
+            var rs = epsRS = new Lampa.Scroll({ horizontal: true, step: 320 });
+            var cn = String(continueNum()), focusEl = null;
             order.forEach(function (n) {
-                var item = nums[n], e = item.a, ok = e && playable(e);
-                var row = selectable($('<div class="yummy-ep selector"></div>'));
-                if (!ok) row.addClass('yummy-ep--off');
-                row.append($('<div class="yummy-ep__num"></div>').text('Серия ' + n));
-                row.append($('<div class="yummy-ep__name"></div>').text(e && e.name ? e.name : ''));
-                var q = ok ? ['1080', '720', '480'].filter(function (k) { return e.q[k]; }).join(' · ') : 'нет в AniLibria';
-                row.append($('<div class="yummy-ep__q"></div>').text(q));
-                if (ok) row.append(Lampa.Timeline.render(Lampa.Timeline.view(hashOf(T.y.id, n))));
-                row.on('hover:enter', function () {
+                var e = nums[n].a, ok = e && playable(e);
+                var t = $('<div class="yummy-ep selector"><div class="yummy-ep__img"><div class="yummy-ep__n"></div></div><div class="yummy-ep__name"></div><div class="yummy-ep__q"></div></div>');
+                var im = t.find('.yummy-ep__img');
+                if (e && e.img) im.css('background-image', 'url("' + e.img + '")');
+                t.find('.yummy-ep__n').text(n);
+                t.find('.yummy-ep__name').text(e && e.name ? e.name : 'Серия ' + n);
+                var p = ok ? pct(T.y.id, n) : 0;
+                t.find('.yummy-ep__q').text(ok ? (p >= 90 ? '✓ Просмотрено · ' : '') + ['1080', '720', '480'].filter(function (k) { return e.q[k]; }).join(' · ') : 'нет в AniLibria');
+                if (p > 0 && p < 90) im.append($('<div class="yummy-bar"><i></i></div>').find('i').css('width', p + '%').end());
+                if (!ok) t.addClass('yummy-ep--off');
+                if (ok && n === cn) { t.addClass('yummy-ep--cur'); focusEl = t; }
+                sel(t, rs, epsEl);
+                t.on('hover:enter', function () {
                     if (!ok) return Lampa.Noty.show('Эта серия не найдена в AniLibria');
                     play(n);
                 });
-                listEl.append(row);
+                rs.append(t);
             });
-            refresh();
+            epsEl.append(rs.render());
+            if (focusEl) setTimeout(function () { try { rs.update(focusEl, true); } catch (e) {} }, 0);
         }
 
         /* ---- воспроизведение ---- */
@@ -717,6 +1012,14 @@
             Lampa.Player.play(list[startIdx]);
             Lampa.Player.playlist(list);
             updateButtons();
+        }
+        function afterPlayer() {
+            T.played = false;
+            if (T.rel) {
+                var eps = T.rel.episodes.filter(playable), w = lastWatched(eps);
+                if (w) histSave(T.y, eps[w.i].num);
+            }
+            renderEps(); updateButtons(); refresh(true);
         }
 
         /* =========================== LIFECYCLE ========================== */
@@ -742,13 +1045,18 @@
                 back: function () { Lampa.Activity.backward(); }
             });
             Lampa.Controller.toggle('content');
-            if (mode === 'title' && T.played) { T.played = false; renderList(); updateButtons(); }
-            if (mode === 'home' && (object.tab === 'fav' || object.tab === 'hist')) switchTab(object.tab);
+            if (mode === 'title' && T.played) afterPlayer();
+            if (mode === 'home') {
+                if (object.tab === 'fav' || object.tab === 'hist') switchTab(object.tab);
+                else if (object.tab === 'home' && rowEls.hist) { renderHist(); refresh(true); }
+            }
         };
         this.pause = function () {};
         this.stop = function () {};
         this.destroy = function () {
             destroyed = true;
+            clearTimeout(timer);
+            clearRows(); kill(seasonRS); kill(epsRS);
             scroll.destroy();
             root.remove();
         };
@@ -769,43 +1077,101 @@
     }
 
     function addStyle() {
-        var css = '' +
-            '.yummy-tabs{display:flex;flex-wrap:wrap;padding:1em 1.5em 0}' +
-            '.yummy-tab{padding:.6em 1.3em;margin:0 .6em .6em 0;border-radius:1.5em;background:rgba(255,255,255,.08);font-size:1.2em}' +
-            '.yummy-tab--active{background:rgba(255,255,255,.22)}' +
-            '.yummy-tab.focus,.yummy-btn.focus{background:#fff;color:#000}' +
-            '.yummy-grid{display:flex;flex-wrap:wrap;padding:1em 1.5em}' +
-            '.yummy-row{width:100%;margin-bottom:1em}' +
-            '.yummy-card{width:13em;margin:0 1em 1.5em 0;position:relative}' +
-            '.yummy-card__img{padding-bottom:150%;border-radius:.6em;background:#2a2a2a center/cover no-repeat}' +
-            '.yummy-card.focus .yummy-card__img{box-shadow:0 0 0 .25em #fff}' +
-            '.yummy-card__title{margin-top:.5em;font-size:1.1em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
-            '.yummy-card__sub{opacity:.6;font-size:.95em;margin-top:.15em}' +
-            '.yummy-msg{width:100%;padding:1.2em 1.5em}' +
-            '.yummy-msg__text{margin-bottom:1em;opacity:.8;font-size:1.2em;line-height:1.4}' +
-            '.yummy-btn{display:inline-block;padding:.7em 1.4em;margin:0 .8em .8em 0;border-radius:.6em;background:rgba(255,255,255,.1);font-size:1.2em}' +
-            '.yummy-btn--main{background:rgba(255,255,255,.22)}' +
-            '.yummy-btn--wide{width:100%;box-sizing:border-box}' +
-            '.yummy-info{display:flex;padding:1.5em}' +
-            '.yummy-info__poster{flex:0 0 14em;height:21em;border-radius:.6em;background:#2a2a2a center/cover no-repeat;margin-right:2em}' +
-            '.yummy-info__body{flex:1;min-width:0}' +
-            '.yummy-info__title{font-size:2.2em;font-weight:600;line-height:1.15}' +
-            '.yummy-info__orig{opacity:.55;margin-top:.3em;font-size:1.1em}' +
-            '.yummy-info__meta{margin-top:.8em;font-size:1.2em;opacity:.85}' +
-            '.yummy-info__genres{margin-top:.4em;opacity:.65}' +
-            '.yummy-info__desc{margin:.9em 0 1.2em;line-height:1.45;opacity:.85;max-height:9em;overflow:hidden;font-size:1.1em}' +
-            '.yummy-list{padding:0 1.5em 2em}' +
-            '.yummy-section{font-size:1.4em;margin:0 0 .8em}' +
-            '.yummy-voice,.yummy-ep,.yummy-cand{position:relative;padding:.9em 1.2em;margin-bottom:.5em;border-radius:.6em;background:rgba(255,255,255,.07)}' +
-            '.yummy-voice.focus,.yummy-ep.focus,.yummy-cand.focus{background:#fff;color:#000}' +
-            '.yummy-voice__t{font-size:1.3em}.yummy-voice__s,.yummy-cand__s{opacity:.6;margin-top:.2em}' +
-            '.yummy-ep{display:flex;align-items:center}' +
-            '.yummy-ep__num{flex:0 0 9em;font-size:1.2em}' +
-            '.yummy-ep__name{flex:1;opacity:.7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:1em}' +
-            '.yummy-ep__q{opacity:.65;white-space:nowrap}' +
-            '.yummy-ep--off{opacity:.4}' +
-            '.yummy-ep .time-line{position:absolute;left:0;right:0;bottom:0}' +
-            '@media (max-width:700px){.yummy-info{flex-direction:column}.yummy-info__poster{margin:0 0 1em}}';
+        var BG = '7,8,13';
+        var css = [
+            '.yummy{color:#fff;background:#07080d;min-height:100%;font-family:-apple-system,"SF Pro Display","Inter","Segoe UI",Roboto,Arial,sans-serif;letter-spacing:-.01em;animation:yFade .45s ease both}',
+            '@keyframes yFade{from{opacity:0}to{opacity:1}}',
+            '@keyframes yRise{from{opacity:0;transform:translate3d(0,.7em,0)}to{opacity:1;transform:none}}',
+            /* стекло */
+            '.yummy-glass{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.14);-webkit-backdrop-filter:blur(1.1em) saturate(1.5);backdrop-filter:blur(1.1em) saturate(1.5);box-shadow:inset 0 1px 0 rgba(255,255,255,.18)}',
+            '.yummy--flat .yummy-glass{-webkit-backdrop-filter:none;backdrop-filter:none;background:rgba(44,48,60,.92);box-shadow:none}',
+            /* шапка и приветствие */
+            '.yummy-bar-top{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;padding:1.8em 2em .5em}',
+            '.yummy-hello{margin-bottom:.6em;max-width:100%}',
+            '.yummy-hello__a{display:block;font-size:1.2em;font-weight:500;opacity:.6;animation:yRise .8s .1s both cubic-bezier(.2,.8,.2,1)}',
+            '.yummy-hello__b{display:block;font-size:2.7em;line-height:1.12;margin-top:.1em;animation:yRise .9s .3s both cubic-bezier(.2,.8,.2,1)}',
+            '.yummy-hello__b i{font-family:Georgia,"Times New Roman",serif;font-style:italic;font-weight:400;color:#ffd9a8;background:linear-gradient(100deg,#fff 0%,#ffe0b8 45%,#ff9f80 100%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}',
+            '.yummy-tabs{display:flex;flex-wrap:wrap;margin-bottom:.6em;animation:yRise .9s .5s both}',
+            '.yummy-tab{padding:.55em 1.2em;margin-left:.6em;border-radius:2em;font-size:1.1em;font-weight:500;transition:transform .2s,background-color .2s,color .2s}',
+            '.yummy-tab--active{background:rgba(255,255,255,.24)}',
+            '.yummy-tab.focus{background:#fff;color:#000;transform:scale(1.07)}',
+            /* hero */
+            '.yummy-hero{position:relative;margin:.6em 2em 0;border-radius:1.4em;overflow:hidden;min-height:23em;background:#12141b;animation:yRise .9s .55s both cubic-bezier(.2,.8,.2,1)}',
+            '.yummy-hero--ghost{animation:none;opacity:.5}',
+            '.yummy-hero__bg,.yummy-title__bg{position:absolute;top:0;left:0;right:0;bottom:0;background:#12141b center 22%/cover no-repeat}',
+            '.yummy-hero__sh{position:absolute;top:0;left:0;right:0;bottom:0;background:linear-gradient(90deg,rgba(' + BG + ',.97) 0%,rgba(' + BG + ',.86) 36%,rgba(' + BG + ',.2) 78%),linear-gradient(0deg,rgba(' + BG + ',.85) 0%,rgba(' + BG + ',0) 50%)}',
+            '.yummy-hero__body{position:relative;padding:2.6em 2.8em 2.2em;max-width:48%;box-sizing:border-box}',
+            '.yummy-hero__kick{font-size:.95em;letter-spacing:.16em;text-transform:uppercase;font-weight:600;opacity:.65;margin-bottom:.7em}',
+            '.yummy-hero__title{font-size:2.8em;font-weight:700;line-height:1.08;letter-spacing:-.025em;max-height:2.2em;overflow:hidden}',
+            '.yummy-chips{margin-top:.9em}',
+            '.yummy-pill{display:inline-block;padding:.25em .8em;margin:0 .5em .5em 0;border-radius:2em;font-size:1em;font-weight:500}',
+            '.yummy-hero__desc{margin:.5em 0 1.4em;line-height:1.5;opacity:.8;font-size:1.1em;max-height:6em;overflow:hidden}',
+            /* кнопки */
+            '.yummy-btn{display:inline-block;padding:.75em 1.6em;margin:0 .8em .6em 0;border-radius:2em;font-size:1.2em;font-weight:600;transition:transform .2s,background-color .2s,color .2s,box-shadow .2s}',
+            '.yummy-btn--main{background:#fff;color:#000}',
+            '.yummy-btn--dim{opacity:.7}',
+            '.yummy-btn--glass.focus,.yummy-btn.focus{background:#fff;color:#000}',
+            '.yummy-btn.focus{transform:scale(1.07);box-shadow:0 .5em 1.6em rgba(255,255,255,.28)}',
+            '.yummy-btn--wide{display:block;width:100%;box-sizing:border-box;border-radius:1em}',
+            '.yummy-wide{width:100%;padding:0 .5em}',
+            /* подборки */
+            '.yummy-rows{padding-bottom:3em}',
+            '.yummy-row{margin-top:1.6em}',
+            '.yummy-row__t{font-size:1.5em;font-weight:700;letter-spacing:-.02em;margin:0 0 .1em 1.35em}',
+            '.yummy-row .scroll__body{display:flex;flex-wrap:nowrap;padding:1.1em 2em 2.4em}',
+            '.yummy-grid{display:flex;flex-wrap:wrap;padding:1.2em 1.4em 3em}',
+            /* карточки */
+            '.yummy-card{flex:0 0 auto;width:11.5em;margin:0 1.1em 1.6em 0;position:relative;transition:transform .22s ease-out;-webkit-transform:translateZ(0);transform:translateZ(0)}',
+            '.yummy-card__img{position:relative;padding-bottom:150%;border-radius:1em;background:#1b1e27 center/cover no-repeat;overflow:hidden;box-shadow:0 .2em .8em rgba(0,0,0,.4);transition:box-shadow .22s ease-out}',
+            '.yummy-card.focus{transform:translate3d(0,-.3em,0) scale(1.08);z-index:2}',
+            '.yummy-card.focus .yummy-card__img{box-shadow:0 1em 2.2em rgba(0,0,0,.65),0 0 0 .13em rgba(255,255,255,.92)}',
+            '.yummy-card__title{margin-top:.65em;font-size:1.08em;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+            '.yummy-card__sub{opacity:.55;font-size:.92em;margin-top:.15em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+            '.yummy-badge{position:absolute;top:.6em;left:.6em;padding:.2em .65em;border-radius:2em;font-size:.85em;font-weight:600}',
+            '.yummy-bar{position:absolute;left:.7em;right:.7em;bottom:.7em;height:.3em;border-radius:.3em;background:rgba(255,255,255,.28);overflow:hidden}',
+            '.yummy-bar i{display:block;height:100%;background:#fff;border-radius:.3em}',
+            /* страница тайтла */
+            '.yummy-title{position:relative;overflow:hidden;min-height:26em}',
+            '.yummy-title__bg{opacity:.5;background-position:center 20%}',
+            '.yummy-title__sh{position:absolute;top:0;left:0;right:0;bottom:0;background:linear-gradient(90deg,rgba(' + BG + ',.96) 0%,rgba(' + BG + ',.75) 55%,rgba(' + BG + ',.35) 100%),linear-gradient(0deg,rgba(' + BG + ',1) 0%,rgba(' + BG + ',0) 55%)}',
+            '.yummy-info{position:relative;display:flex;padding:2.4em 2.4em 1.2em;animation:yRise .7s both cubic-bezier(.2,.8,.2,1)}',
+            '.yummy-info__poster{flex:0 0 14em;height:21em;border-radius:1em;background:#1b1e27 center/cover no-repeat;margin-right:2.4em;box-shadow:0 1.2em 2.6em rgba(0,0,0,.6)}',
+            '.yummy-info__body{flex:1;min-width:0}',
+            '.yummy-info__title{font-size:2.7em;font-weight:700;line-height:1.1;letter-spacing:-.025em}',
+            '.yummy-info__orig{opacity:.5;margin-top:.35em;font-size:1.1em}',
+            '.yummy-info__genres{opacity:.65;font-size:1.05em;margin-top:.2em}',
+            '.yummy-info__desc{margin:.9em 0 1.3em;line-height:1.5;opacity:.82;max-height:8.4em;overflow:hidden;font-size:1.1em;max-width:46em}',
+            /* озвучка */
+            '.yummy-block{padding:0 2em}',
+            '.yummy-panel{padding:1.2em 1.5em;border-radius:1.2em;margin-top:.4em}',
+            '.yummy-panel__t{font-size:1.4em;font-weight:700}',
+            '.yummy-panel__s{opacity:.6;margin:.15em 0 .9em}',
+            '.yummy-chiprow{margin-top:.2em}',
+            '.yummy-chiplabel{display:inline-block;opacity:.55;margin:0 .9em .6em 0;font-size:1.05em}',
+            '.yummy-chip{display:inline-block;padding:.5em 1.1em;margin:0 .6em .6em 0;border-radius:2em;background:rgba(255,255,255,.09);font-size:1.05em;font-weight:500;max-width:24em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:top;transition:transform .2s,background-color .2s,color .2s}',
+            '.yummy-chip--on{background:rgba(255,255,255,.26)}',
+            '.yummy-chip.focus{background:#fff;color:#000;transform:scale(1.06)}',
+            '.yummy-chip--season{flex:0 0 auto;display:block}',
+            '.yummy-cand{padding:.8em 1.1em;margin-bottom:.5em;border-radius:.9em;background:rgba(255,255,255,.07);transition:transform .2s,background-color .2s}',
+            '.yummy-cand.focus{background:#fff;color:#000;transform:scale(1.02)}',
+            '.yummy-cand__s{opacity:.6;margin-top:.15em}',
+            '.yummy-msg{margin:.6em 2em;padding:1.2em 1.5em;border-radius:1.2em}',
+            '.yummy-msg__text{margin-bottom:.9em;opacity:.85;font-size:1.15em;line-height:1.45}',
+            '.yummy-block .yummy-msg{margin:.4em 0}',
+            /* серии */
+            '.yummy-ep{flex:0 0 auto;width:17em;margin-right:1.1em;transition:transform .22s ease-out;-webkit-transform:translateZ(0);transform:translateZ(0)}',
+            '.yummy-ep__img{position:relative;padding-bottom:56.25%;border-radius:.9em;background:#1b1e27 linear-gradient(135deg,#262a38,#14161e) center/cover no-repeat;overflow:hidden;box-shadow:0 .2em .8em rgba(0,0,0,.4);transition:box-shadow .22s ease-out}',
+            '.yummy-ep__n{position:absolute;left:.55em;bottom:.2em;font-size:2.4em;font-weight:700;text-shadow:0 .05em .4em rgba(0,0,0,.7)}',
+            '.yummy-ep__name{margin-top:.6em;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+            '.yummy-ep__q{opacity:.55;font-size:.9em;margin-top:.15em}',
+            '.yummy-ep.focus{transform:translate3d(0,-.25em,0) scale(1.07);z-index:2}',
+            '.yummy-ep.focus .yummy-ep__img{box-shadow:0 1em 2.2em rgba(0,0,0,.65),0 0 0 .13em rgba(255,255,255,.92)}',
+            '.yummy-ep--off{opacity:.38}',
+            '.yummy-ep--cur .yummy-ep__img{box-shadow:0 0 0 .1em rgba(255,255,255,.5)}',
+            /* адаптация */
+            '@media (max-width:900px){.yummy-hero__body{max-width:100%}.yummy-hello__b{font-size:2em}.yummy-bar-top{display:block}.yummy-tab:first-child{margin-left:0}}',
+            '@media (max-width:700px){.yummy-info{flex-direction:column}.yummy-info__poster{margin:0 0 1em}}'
+        ].join('');
         $('<style></style>').text(css).appendTo('head');
     }
 
@@ -816,6 +1182,11 @@
             component: 'yummyanime',
             param: { name: 'yummy_source', type: 'select', values: { ani: 'AniLibria (весь каталог)', yummy: 'YummyAnime + поиск релиза' }, 'default': 'ani' },
             field: { name: 'Источник каталога и поиска', description: 'AniLibria: русские данные, без сопоставления. YummyAnime: свой каталог, релиз ищется автоматически' }
+        });
+        Lampa.SettingsApi.addParam({
+            component: 'yummyanime',
+            param: { name: 'yummy_glass', type: 'select', values: { on: 'Включён', off: 'Выключен (быстрее)' }, 'default': 'on' },
+            field: { name: 'Эффект стекла (Liquid Glass)', description: 'На слабых телевизорах выключите для плавности. Применяется при следующем открытии раздела' }
         });
         Lampa.SettingsApi.addParam({
             component: 'yummyanime',
@@ -850,8 +1221,8 @@
         Lampa.SettingsApi.addParam({
             component: 'yummyanime',
             param: { name: 'yummy_clear', type: 'button' },
-            field: { name: 'Сбросить сопоставления с AniLibria', description: 'Заново искать релизы для всех тайтлов' },
-            onChange: function () { W('yummy_match', {}); mem = {}; Lampa.Noty.show('Сопоставления сброшены'); }
+            field: { name: 'Сбросить сопоставления и кэш', description: 'Заново искать релизы и обновить подборки главной' },
+            onChange: function () { W('yummy_match', {}); W('yummy_rc', {}); mem = {}; Lampa.Noty.show('Сопоставления и кэш сброшены'); }
         });
     }
 
@@ -865,7 +1236,7 @@
     }
 
     if (window.__YUMMY_TEST__) {
-        window.__yummy_test = { norm: norm, sim: sim, score: score, mapY: mapY, mapRel: mapRel, mapA: mapA, autoPick: autoPick, pickUrl: pickUrl, pickQueries: pickQueries, baseTitle: baseTitle, seasonOf: seasonOf, qualityMap: qualityMap, fixUrl: fixUrl };
+        window.__yummy_test = { norm: norm, sim: sim, score: score, mapY: mapY, mapRel: mapRel, mapA: mapA, autoPick: autoPick, pickUrl: pickUrl, pickQueries: pickQueries, baseTitle: baseTitle, seasonOf: seasonOf, qualityMap: qualityMap, fixUrl: fixUrl, flatRel: flatRel };
         return;
     }
     if (window.appready) start();
