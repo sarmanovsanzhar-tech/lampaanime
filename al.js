@@ -62,7 +62,8 @@
     /* YummyAnime */
     function yGet(path, ok, fail) {
         var bases = apiBases(), token = String(S('yummy_token', '') || ''), i = 0;
-        var headers = token ? { 'X-Application': token } : undefined;
+        var headers = { 'Accept-Language': String(S('yummy_lang', 'ru') || 'ru') };
+        if (token) headers['X-Application'] = token;
         (function next() {
             if (i >= bases.length) return fail && fail();
             request(bases[i++] + path, function (j) {
@@ -92,6 +93,11 @@
     function aSearch(q, ok, fail) {
         cached('as:' + q, TTL.search, function (o, f) {
             aGet('/app/search/releases?query=' + encodeURIComponent(q), o, f);
+        }, ok, fail);
+    }
+    function aCatalog(page, ok, fail) {
+        cached('ac:' + page, TTL.catalog, function (o, f) {
+            aGet('/anime/catalog/releases?page=' + page + '&limit=' + PAGE, o, f);
         }, ok, fail);
     }
     function aRelease(id, ok, fail) {
@@ -157,6 +163,17 @@
             titles: uniq(titles)
         };
     }
+    function mapA(r) {
+        var rel = mapRel(r);
+        if (!rel || !rel.id) return null;
+        return {
+            id: 'a:' + rel.id, title: rel.ru || rel.en, year: rel.year, type: rel.type, status: '', poster: rel.poster,
+            desc: rel.desc, genres: rel.genres, rating: '', eps: rel.total ? { count: rel.total, aired: 0 } : null,
+            titles: uniq([rel.ru, rel.en])
+        };
+    }
+    function isAniId(id) { return String(id).indexOf('a:') === 0; }
+    function srcAni() { return String(S('yummy_source', 'ani') || 'ani') !== 'yummy'; }
     function mergeY(a, b) {
         if (!b) return a;
         var o = {};
@@ -182,6 +199,10 @@
             ru: esc(r.name && r.name.main), en: esc(r.name && r.name.english),
             year: parseInt(r.year, 10) || 0,
             total: r.episodes_total || 0,
+            desc: esc(r.description).replace(/<[^>]+>/g, ''),
+            genres: (r.genres || []).map(function (g) { return g && (g.name || g.title) || g; }).filter(Boolean),
+            type: esc(r.type && (r.type.description || r.type.value) || ''),
+            poster: r.poster ? fixUrl(r.poster.src || r.poster.preview || r.poster.thumbnail || '', aniBase()) : '',
             episodes: (r.episodes || []).map(mapEp)
         };
         out.episodes.sort(function (a, b) { return parseFloat(a.num) - parseFloat(b.num); });
@@ -206,12 +227,24 @@
         var cont = (a.indexOf(b) > -1 || b.indexOf(a) > -1) ? 0.15 : 0;
         return Math.min(0.99, Math.max(jac, dice) + cont);
     }
+    function seasonOf(s) {
+        s = esc(s).toLowerCase();
+        var m = s.match(/(?:season|сезон)\s*(\d+)|(\d+)(?:st|nd|rd|th)?\s*(?:season|сезон)|\s(\d)$/);
+        return m ? parseInt(m[1] || m[2] || m[3], 10) : 0;
+    }
+    function baseTitle(s) {
+        return esc(s).replace(/(?:season|сезон)\s*\d+/ig, '').replace(/\d+(?:st|nd|rd|th)?\s*(?:season|сезон)/ig, '')
+            .replace(/\s+\d$/, '').replace(/[:\-–\s]+$/, '').replace(/\s+/g, ' ').trim();
+    }
     function score(y, r) {
         var names = [r.ru, r.en], best = 0;
         (y.titles && y.titles.length ? y.titles : [y.title]).forEach(function (t) {
-            names.forEach(function (n) { best = Math.max(best, sim(t, n)); });
+            names.forEach(function (n) { best = Math.max(best, sim(t, n), sim(baseTitle(t), baseTitle(n))); });
         });
         var s = best;
+        var ys = 0, rs = Math.max(seasonOf(r.ru), seasonOf(r.en));
+        (y.titles || [y.title]).forEach(function (t) { ys = ys || seasonOf(t); });
+        if (ys && rs) s += ys === rs ? 0.1 : -0.15;
         if (y.year && r.year) {
             var d = Math.abs(y.year - r.year);
             if (d === 0) s += 0.12; else if (d > 1) s -= 0.3;
@@ -221,10 +254,11 @@
         return s;
     }
     function pickQueries(y) {
-        var all = uniq([y.title].concat(y.titles || []));
+        var raw = uniq([y.title].concat(y.titles || []));
+        var all = uniq(raw.map(baseTitle).concat(raw));
         var latin = all.filter(function (t) { return /[a-z]/i.test(t) && !/[а-яё]/i.test(t); });
         var rest = all.filter(function (t) { return latin.indexOf(t) === -1; });
-        return uniq([rest[0] || all[0]].concat(latin.slice(0, 2), rest.slice(1, 2))).slice(0, 4);
+        return uniq([rest[0] || all[0]].concat(latin.slice(0, 3), rest.slice(1, 2))).slice(0, 5);
     }
     // cb(err, sortedCandidates[{rel, score}])
     function findReleases(y, cb) {
@@ -414,12 +448,13 @@
             state.loading = true;
             var page = state.page + 1, tab = object.tab;
             if (page === 1) self.activity.loader(true);
-            var fn = tab === 'search' ? function (ok, fail) { ySearch(object.query, ok, fail); }
-                : function (ok, fail) { yCatalog(page, ok, fail); };
+            var ani = srcAni();
+            var fn = tab === 'search' ? function (ok, fail) { (ani ? aSearch : ySearch)(object.query, ok, fail); }
+                : function (ok, fail) { (ani ? aCatalog : yCatalog)(page, ok, fail); };
             fn(function (res) {
                 if (destroyed || tab !== object.tab) return;
                 state.loading = false;
-                var list = (res && res.length !== undefined ? res : (res && res.data) || []).map(mapY).filter(Boolean);
+                var list = (res && res.length !== undefined ? res : (res && res.data) || []).map(ani ? mapA : mapY).filter(Boolean);
                 if (tab === 'search') state.ended = true; // поиск отдаёт одну страницу
                 if (!list.length) {
                     state.ended = true;
@@ -433,7 +468,7 @@
             }, function () {
                 if (destroyed || tab !== object.tab) return;
                 state.loading = false;
-                gridEl.append(msg('Не удалось загрузить данные YummyAnime. Проверьте сеть или используйте поиск.', function () {
+                gridEl.append(msg('Не удалось загрузить каталог (' + (ani ? 'AniLibria' : 'YummyAnime') + '). Проверьте сеть или смените источник в настройках плагина.', function () {
                     gridEl.find('.yummy-msg').remove();
                     loadMore();
                 }));
@@ -453,6 +488,7 @@
             scroll.append(listEl);
             renderHead();
             self.activity.loader(true);
+            if (isAniId(T.y.id)) return startMatch();
             yDetail(T.y.id, function (d) {
                 if (destroyed) return;
                 T.y = mergeY(T.y, mapY(d));
@@ -525,6 +561,7 @@
         function startMatch() {
             T.status = 'matching'; T.rel = null;
             renderList();
+            if (isAniId(T.y.id)) return loadRelease(String(T.y.id).slice(2));
             var stored = matchGet(T.y.id);
             if (stored) return loadRelease(stored, function () { stored = null; findAuto(); });
             findAuto();
@@ -547,6 +584,11 @@
                 if (destroyed) return;
                 T.rel = mapRel(r);
                 T.status = T.rel && T.rel.episodes.length ? 'ok' : 'noeps';
+                if (T.rel && isAniId(T.y.id)) {
+                    T.y = mergeY(T.y, { desc: T.rel.desc, genres: T.rel.genres, type: T.rel.type, poster: T.rel.poster, year: T.rel.year });
+                    renderHead();
+                }
+                if (T.rel && T.rel.ru && !/[а-яё]/i.test(T.y.title)) { T.y.title = T.rel.ru; renderHead(); }
                 self.activity.loader(false);
                 renderList(); updateButtons();
             }, function () {
@@ -772,8 +814,18 @@
         Lampa.SettingsApi.addComponent({ component: 'yummyanime', name: 'YummyAnime', icon: ICON });
         Lampa.SettingsApi.addParam({
             component: 'yummyanime',
+            param: { name: 'yummy_source', type: 'select', values: { ani: 'AniLibria (весь каталог)', yummy: 'YummyAnime + поиск релиза' }, 'default': 'ani' },
+            field: { name: 'Источник каталога и поиска', description: 'AniLibria: русские данные, без сопоставления. YummyAnime: свой каталог, релиз ищется автоматически' }
+        });
+        Lampa.SettingsApi.addParam({
+            component: 'yummyanime',
             param: { name: 'yummy_quality', type: 'select', values: { '1080': '1080p', '720': '720p', '480': '480p' }, 'default': '1080' },
             field: { name: 'Качество по умолчанию', description: 'Если выбранного нет — берётся ближайшее доступное' }
+        });
+        Lampa.SettingsApi.addParam({
+            component: 'yummyanime',
+            param: { name: 'yummy_lang', type: 'select', values: { ru: 'Русский', en: 'English' }, 'default': 'ru' },
+            field: { name: 'Язык данных YummyAnime', description: 'Отправляется как Accept-Language' }
         });
         Lampa.SettingsApi.addParam({
             component: 'yummyanime',
@@ -813,7 +865,7 @@
     }
 
     if (window.__YUMMY_TEST__) {
-        window.__yummy_test = { norm: norm, sim: sim, score: score, mapY: mapY, mapRel: mapRel, autoPick: autoPick, pickUrl: pickUrl, pickQueries: pickQueries, qualityMap: qualityMap, fixUrl: fixUrl };
+        window.__yummy_test = { norm: norm, sim: sim, score: score, mapY: mapY, mapRel: mapRel, mapA: mapA, autoPick: autoPick, pickUrl: pickUrl, pickQueries: pickQueries, baseTitle: baseTitle, seasonOf: seasonOf, qualityMap: qualityMap, fixUrl: fixUrl };
         return;
     }
     if (window.appready) start();
