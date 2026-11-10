@@ -1,5 +1,5 @@
 /**
- * YummyAnime for Lampa v2.1.0 — Apple TV style + rich cards (type/rating/episodes badges)
+ * YummyAnime for Lampa v2.2.0 — Apple TV style, rich cards, full-bleed hero
  * Каталог YummyAnime + серии в озвучке AniLibria (HLS 480/720/1080) через встроенный плеер Lampa.
  *
  * Источники:
@@ -14,7 +14,7 @@
     if (window.yummyanime_plugin) return;
     window.yummyanime_plugin = true;
 
-    var VERSION = '2.1.0';
+    var VERSION = '2.2.0';
     var DEF_API = 'https://api.yani.tv';
     var FALLBACK_API = 'https://old.yummyani.me/api';
     var DEF_ANI = 'https://anilibria.top';
@@ -414,7 +414,7 @@
 
     function Component(object) {
         var self = this;
-        var scroll = new Lampa.Scroll({ mask: true, over: true, step: 250 });
+        var scroll = new Lampa.Scroll({ mask: (object.mode || 'home') !== 'home', over: true, step: 250 });
         var root = $('<div class="yummy"></div>');
         var last = false, destroyed = false, timer = 0, gen = 0;
         var rowScroll = {}, HM = {}, lastTop = null, q = [], qt = 0;
@@ -520,7 +520,7 @@
 
         function buildHome() {
             object.tab = object.tab || 'home';
-            topEl = $('<div class="yummy-top"></div>');
+            topEl = $('<div class="yummy-top"><div class="yummy-top__bg"></div><div class="yummy-top__sh"></div></div>');
             barEl = $('<div class="yummy-bar-top"></div>');
             barEl.append('<div class="yummy-hello"><span class="yummy-hello__a">Добро пожаловать в мир аниме,</span><span class="yummy-hello__b"><i>господин Санжар</i></span></div>');
             var tabs = $('<div class="yummy-tabs"></div>');
@@ -557,7 +557,7 @@
             gen++;
             markTabs();
             clearRows();
-            gridEl.empty(); rowsEl.empty(); heroWrap.empty();
+            gridEl.empty(); rowsEl.empty(); heroWrap.empty(); topEl.removeClass('yummy-top--bg');
             last = false;
             try { scroll.reset && scroll.reset(); } catch (e) {}
             state = { page: 0, loading: false, ended: false };
@@ -633,8 +633,8 @@
         function heroBtns(el, item) {
             var play = sel($('<div class="yummy-btn yummy-btn--main selector"></div>').html(PLAY + 'Смотреть'), null, null, topEl);
             play.on('hover:enter', function () { openTitle(compact(item), true); });
-            var fav = sel($('<div class="yummy-btn yummy-btn--glass yummy-btn--round selector"></div>'), null, null, topEl);
-            function lab() { fav.text(isFav(item.id) ? '✓' : '+'); }
+            var fav = sel($('<div class="yummy-btn yummy-btn--glass selector"></div>'), null, null, topEl);
+            function lab() { fav.text(isFav(item.id) ? '✓ В избранном' : '♡ В избранное'); }
             lab();
             fav.on('hover:enter', function () {
                 var on = toggleFav(item);
@@ -645,12 +645,14 @@
         }
         function renderHero(list) {
             var pool = list.filter(function (i) { return i.poster; }).slice(0, 5);
-            if (!pool.length) { heroWrap.empty(); return; }
+            if (!pool.length) { heroWrap.empty(); topEl.removeClass('yummy-top--bg'); return; }
             var it = pool[Math.floor(Math.random() * pool.length)];
-            var el = $('<div class="yummy-hero"><div class="yummy-hero__bg"></div><div class="yummy-hero__sh"></div><div class="yummy-hero__poster"></div><div class="yummy-hero__body"><div class="yummy-hero__kick">Рекомендуем</div><div class="yummy-hero__title"></div><div class="yummy-hero__meta"></div><div class="yummy-hero__desc"></div><div class="yummy-hero__btns"></div></div></div>');
-            el.find('.yummy-hero__bg,.yummy-hero__poster').css('background-image', 'url("' + it.poster + '")');
+            var el = $('<div class="yummy-hero"><div class="yummy-hero__body"><div class="yummy-hero__title"></div><div class="yummy-hero__desc"></div><div class="yummy-hero__meta"></div><div class="yummy-hero__btns"></div></div></div>');
+            topEl.find('.yummy-top__bg').css('background-image', 'url("' + it.poster + '")');
+            topEl.addClass('yummy-top--bg');
             el.find('.yummy-hero__title').text(it.title);
-            var meta = [it.year || '', (it.genres || []).slice(0, 2).join(', '), it.rating ? '★ ' + it.rating : '', it.age].filter(Boolean);
+            var n = it.eps && (it.eps.aired || it.eps.count);
+            var meta = [it.year || '', (it.genres || []).slice(0, 2).join(', '), it.rating ? '★ ' + it.rating : '', n ? n + ' серий' : '', it.age].filter(Boolean);
             el.find('.yummy-hero__meta').text(meta.join('  ·  '));
             el.find('.yummy-hero__desc').text(it.desc || '');
             heroBtns(el.find('.yummy-hero__btns'), it);
@@ -1132,7 +1134,12 @@
             '.yummy-glass{background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.12);-webkit-backdrop-filter:blur(1.1em) saturate(1.5);backdrop-filter:blur(1.1em) saturate(1.5);box-shadow:inset 0 1px 0 rgba(255,255,255,.18)}',
             '.yummy--flat .yummy-glass{-webkit-backdrop-filter:none;backdrop-filter:none;background:rgba(40,34,62,.92);box-shadow:none}',
             /* шапка и приветствие */
-            '.yummy-bar-top{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;padding:1.8em 2em .5em}',
+            '.yummy-top{position:relative;overflow:hidden}',
+            '.yummy-top__bg{position:absolute;top:0;right:0;bottom:0;width:78%;background:#0b0716 center 18%/cover no-repeat;opacity:0;transition:opacity .7s}',
+            '.yummy-top--bg .yummy-top__bg{opacity:1}',
+            '.yummy-top__sh{position:absolute;top:0;left:0;right:0;bottom:0;background:linear-gradient(90deg,rgba(' + BG + ',1) 0%,rgba(' + BG + ',.88) 30%,rgba(' + BG + ',.25) 70%,rgba(' + BG + ',.1) 100%),linear-gradient(0deg,rgba(' + BG + ',1) 0%,rgba(' + BG + ',0) 38%)}',
+            '.yummy-bar-top,.yummy-herowrap{position:relative}',
+            '.yummy-bar-top{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;padding:.9em 2em .2em}',
             '.yummy-hello{margin-bottom:.6em;max-width:100%}',
             '.yummy-hello__a{display:block;font-size:1.1em;font-weight:500;opacity:.55;animation:yRise .8s .1s both cubic-bezier(.2,.8,.2,1)}',
             '.yummy-hello__b{display:block;font-size:2.4em;line-height:1.12;margin-top:.1em;animation:yRise .9s .3s both cubic-bezier(.2,.8,.2,1)}',
@@ -1142,20 +1149,20 @@
             '.yummy-tab--active{opacity:1;background:rgba(255,255,255,.12)}',
             '.yummy-tab.focus{opacity:1;background:#ddd6fe;color:#2e1065;transform:scale(1.07)}',
             /* hero */
-            '.yummy-hero{position:relative;margin:.6em 2em 0;border-radius:1.4em;overflow:hidden;min-height:13.6em;background:#150d2a}',
+            '.yummy-hero{position:relative;margin:0;min-height:14em}',
             '.yummy-hero--ghost{opacity:.5}',
             '.yummy-hero__bg{opacity:.3}',
             '.yummy-hero__poster{position:absolute;top:1.1em;right:2.4em;width:7.6em;height:11.4em;border-radius:.9em;background:#1b1e27 center/cover no-repeat;box-shadow:0 .4em 1.2em rgba(0,0,0,.5)}',
             '.yummy-hero__bg,.yummy-title__bg{position:absolute;top:0;left:0;right:0;bottom:0;background:#12141b center 22%/cover no-repeat}',
             '.yummy-hero__sh{position:absolute;top:0;left:0;right:0;bottom:0;background:linear-gradient(90deg,rgba(' + BG + ',.97) 0%,rgba(' + BG + ',.85) 50%,rgba(' + BG + ',.55) 100%)}',
-            '.yummy-hero__body{position:relative;padding:1.5em 2em 1.3em;max-width:62%;box-sizing:border-box}',
+            '.yummy-hero__body{position:relative;padding:1.2em 2em 2.2em;max-width:56%;box-sizing:border-box}',
             '.yummy-hero__kick{font-size:.95em;letter-spacing:.16em;text-transform:uppercase;font-weight:600;opacity:.65;margin-bottom:.4em}',
-            '.yummy-hero__title{font-size:1.9em;font-weight:700;line-height:1.1;letter-spacing:-.025em;max-height:2.2em;overflow:hidden}',
+            '.yummy-hero__title{font-size:2.9em;font-weight:800;line-height:1.08;letter-spacing:-.03em;max-height:2.2em;overflow:hidden}',
             '.yummy-chips{margin-top:.6em}',
             '.yummy-pill{display:inline-block;padding:.25em .8em;margin:0 .5em .5em 0;border-radius:2em;font-size:1em;font-weight:500}',
-            '.yummy-hero__desc{margin:.2em 0 .9em;line-height:1.45;opacity:.8;font-size:1em;max-height:2.9em;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}',
+            '.yummy-hero__desc{margin:.7em 0 .5em;line-height:1.4;opacity:.75;font-size:1.15em;max-height:2.8em;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}',
             /* кнопки */
-            '.yummy-hero .yummy-btn{font-size:1.05em;padding:.6em 1.4em;margin-bottom:0}',
+            '.yummy-hero .yummy-btn{font-size:1.1em;padding:.7em 1.7em;margin-bottom:0}',
             '.yummy-btn{display:inline-block;padding:.75em 1.6em;margin:0 .8em .6em 0;border-radius:2em;font-size:1.2em;font-weight:600;transition:transform .15s}',
             '.yummy-btn--main{background:linear-gradient(135deg,#a78bfa,#7c3aed);color:#fff}',
             '.yummy-btn svg{display:none!important}',
@@ -1228,14 +1235,15 @@
             '.yummy-ep.focus{transform:scale(1.06);will-change:transform;z-index:2}',
             '.yummy-ep.focus .yummy-ep__img:after{opacity:1}',
             '.yummy-metaline{opacity:.7;font-size:1.05em}',
-            '.yummy-hero__meta{opacity:.7;font-size:1.05em;margin-top:.5em}',
+            '.yummy-hero__meta{opacity:.7;font-size:1.05em;margin:.2em 0 1.1em}',
+            '.yummy-hero .yummy-btn--main{background:linear-gradient(135deg,#fff,#e4def7);color:#1a1033}',
             '.yummy-hero .yummy-btn--round{padding:0;width:2.5em;height:2.5em;line-height:2.5em;text-align:center;border-radius:50%;font-size:1.2em}',
             '.yummy-card__sub:empty{display:none}',
             '.yummy-card__status{opacity:.4;font-size:.82em;margin-top:.1em}',
             '.yummy-card__type{position:absolute;top:.6em;left:.6em;padding:.15em .55em;border-radius:.4em;background:#e0425a;color:#fff;font-size:.8em;font-weight:700;text-transform:uppercase;line-height:1.4}',
             '.yummy-card__rate{position:absolute;right:.6em;bottom:.6em;padding:.15em .55em;border-radius:.4em;background:rgba(0,0,0,.72);color:#fff;font-size:.95em;font-weight:700;line-height:1.4}',
             /* адаптация */
-            '@media (max-width:900px){.yummy-hero__body{max-width:100%}.yummy-hello__b{font-size:2em}.yummy-bar-top{display:block}.yummy-tab:first-child{margin-left:0}}',
+            '@media (max-width:900px){.yummy-top__bg{width:100%}.yummy-hero__title{font-size:2.2em}.yummy-hero__body{max-width:100%}.yummy-hello__b{font-size:2em}.yummy-bar-top{display:block}.yummy-tab:first-child{margin-left:0}}',
             '@media (max-width:700px){.yummy-info{flex-direction:column}.yummy-info__poster{margin:0 0 1em}}'
         ].join('');
         $('<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:ital,wght@1,500&display=swap&subset=cyrillic">').appendTo('head');
