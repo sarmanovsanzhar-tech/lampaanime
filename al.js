@@ -739,14 +739,12 @@
             headEl.empty();
             titleEl.find('.yummy-title__bg').css('background-image', y.poster ? 'url("' + y.poster + '")' : 'none');
             var n = y.eps && (y.eps.aired || y.eps.count) || (T.rel && T.rel.total) || 0;
-            var meta = [y.year || '', y.type, y.status, n ? n + ' эп.' : '', y.rating ? '★ ' + y.rating : '', y.age || (T.rel && T.rel.age) || ''].filter(Boolean);
-            var el = $('<div class="yummy-info"><div class="yummy-info__poster"></div><div class="yummy-info__body"><div class="yummy-info__title"></div><div class="yummy-info__orig"></div><div class="yummy-chips"></div><div class="yummy-info__genres"></div><div class="yummy-info__desc"></div><div class="yummy-info__btns"></div></div></div>');
+            var meta = [y.year || '', (y.genres || []).slice(0, 2).join(', '), n ? n + ' эп.' : '', y.rating ? '★ ' + y.rating : '', y.age || (T.rel && T.rel.age) || ''].filter(Boolean);
+            var el = $('<div class="yummy-info"><div class="yummy-info__poster"></div><div class="yummy-info__body"><div class="yummy-info__title"></div><div class="yummy-chips"></div><div class="yummy-info__desc"></div><div class="yummy-info__btns"></div></div></div>');
             if (y.poster) el.find('.yummy-info__poster').css('background-image', 'url("' + y.poster + '")');
             el.find('.yummy-info__title').text(y.title);
-            el.find('.yummy-info__orig').text((y.titles || []).filter(function (t) { return norm(t) !== norm(y.title); }).slice(0, 2).join(' / '));
             var chips = el.find('.yummy-chips');
             meta.forEach(function (m) { chips.append($('<span class="yummy-pill yummy-glass"></span>').text(m)); });
-            el.find('.yummy-info__genres').text((y.genres || []).join(' · '));
             el.find('.yummy-info__desc').text(y.desc || '');
             btnPlay = sel($('<div class="yummy-btn yummy-btn--main selector"></div>'), null, null, titleEl);
             btnPlay.on('hover:enter', function () { var k = continueNum(); if (k) play(k); else Lampa.Noty.show('Нет доступных серий'); });
@@ -939,42 +937,40 @@
                 c2.on('hover:enter', changeRelease);
                 return voiceEl.append(c2);
             }
-            // ok
-            var panel = $('<div class="yummy-panel yummy-glass"></div>');
-            panel.append($('<div class="yummy-panel__t"></div>').text('Озвучка'));
-            panel.append($('<div class="yummy-panel__s"></div>').text('AniLibria · ' + rel.ru + (rel.year ? ' (' + rel.year + ')' : '')));
-            var rv = $('<div class="yummy-chiprow"></div>');
-            rv.append(sel(chip('● ' + (rel.ru || 'AniLibria'), true), null, null, voiceEl));
-            T.cands.filter(function (c) { return c.rel.id !== rel.id; }).slice(0, 3).forEach(function (c) {
-                var el = sel(chip(c.rel.ru + (c.rel.year ? ' (' + c.rel.year + ')' : '')), null, null, voiceEl);
-                el.on('hover:enter', function () { chooseRelease(c); });
-                rv.append(el);
-            });
-            var more = sel(chip('Другие релизы…'), null, null, voiceEl);
-            more.on('hover:enter', changeRelease);
-            rv.append(more);
-            panel.append(rv);
+            // ok: компактная строка «Озвучка · Качество»
+            var line = $('<div class="yummy-opts"></div>');
+            var vb = sel($('<div class="yummy-opt selector"></div>'), null, null, voiceEl);
+            vb.append($('<span class="yummy-opt__l"></span>').text('Озвучка')).append(document.createTextNode('AniLibria'));
+            vb.on('hover:enter', changeRelease);
+            line.append(vb);
             var avail = {};
             rel.episodes.forEach(function (e) { Object.keys(e.q).forEach(function (k) { avail[k] = 1; }); });
             var qs = ['1080', '720', '480'].filter(function (k) { return avail[k]; });
             if (qs.length) {
                 var cur = String(S('yummy_quality', '1080'));
                 if (!avail[cur]) cur = qs[0];
-                var rq = $('<div class="yummy-chiprow"></div>').append($('<span class="yummy-chiplabel"></span>').text('Качество'));
-                qs.forEach(function (k) {
-                    var el = sel(chip(k + 'p', k === cur), null, null, voiceEl);
-                    el.on('hover:enter', function () { W('yummy_quality', k); renderVoice(); renderEps(); updateButtons(); refresh(true); });
-                    rq.append(el);
+                var qb = sel($('<div class="yummy-opt selector"></div>'), null, null, voiceEl);
+                qb.append($('<span class="yummy-opt__l"></span>').text('Качество')).append(document.createTextNode(cur + 'p'));
+                qb.on('hover:enter', function () {
+                    Lampa.Select.show({
+                        title: 'Качество',
+                        items: qs.map(function (k) { return { title: k + 'p', q: k, selected: k === cur }; }),
+                        onSelect: function (a) {
+                            W('yummy_quality', a.q);
+                            Lampa.Controller.toggle('content');
+                            renderVoice(); renderEps(); updateButtons(); refresh(true);
+                        },
+                        onBack: function () { Lampa.Controller.toggle('content'); }
+                    });
                 });
-                panel.append(rq);
+                line.append(qb);
             }
-            voiceEl.append(panel);
+            voiceEl.append(line);
         }
         function renderSeasons() {
             kill(seasonRS); seasonRS = null;
             seasonEl.empty();
             if (T.status !== 'ok' || !T.fr || T.fr.length < 2) return;
-            seasonEl.append($('<div class="yummy-row__t"></div>').text('Сезоны и части'));
             var rs = seasonRS = new Lampa.Scroll({ horizontal: true, step: 300 });
             T.fr.forEach(function (f) {
                 var on = T.rel && String(f.id) === String(T.rel.id);
@@ -1118,8 +1114,8 @@
             '@keyframes yFade{from{opacity:0}to{opacity:1}}',
             '@keyframes yRise{from{opacity:0;transform:translate3d(0,.7em,0)}to{opacity:1;transform:none}}',
             /* стекло */
-            '.yummy-glass{background:rgba(139,92,246,.2);border:1px solid rgba(196,181,253,.28);-webkit-backdrop-filter:blur(1.1em) saturate(1.5);backdrop-filter:blur(1.1em) saturate(1.5);box-shadow:inset 0 1px 0 rgba(255,255,255,.18)}',
-            '.yummy--flat .yummy-glass{-webkit-backdrop-filter:none;backdrop-filter:none;background:rgba(58,38,102,.92);box-shadow:none}',
+            '.yummy-glass{background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.12);-webkit-backdrop-filter:blur(1.1em) saturate(1.5);backdrop-filter:blur(1.1em) saturate(1.5);box-shadow:inset 0 1px 0 rgba(255,255,255,.18)}',
+            '.yummy--flat .yummy-glass{-webkit-backdrop-filter:none;backdrop-filter:none;background:rgba(40,34,62,.92);box-shadow:none}',
             /* шапка и приветствие */
             '.yummy-bar-top{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;padding:1.8em 2em .5em}',
             '.yummy-hello{margin-bottom:.6em;max-width:100%}',
@@ -1150,6 +1146,7 @@
             '.yummy-btn svg{display:none!important}',
             '.yummy-ico-play{display:inline-block;width:0;height:0;border-style:solid;border-width:.42em 0 .42em .7em;border-color:transparent transparent transparent currentColor;margin-right:.5em;vertical-align:-.05em}',
             '.yummy-btn--dim{opacity:.7}',
+            '.yummy-btn--glass{background:rgba(139,92,246,.28)}',
             '.yummy-btn--glass.focus,.yummy-btn.focus{background:#ddd6fe;color:#2e1065}',
             '.yummy-btn--main.focus{background:linear-gradient(135deg,#c4b5fd,#8b5cf6);color:#fff}',
             '.yummy-btn.focus{transform:scale(1.06)}',
@@ -1157,7 +1154,7 @@
             '.yummy-wide{width:100%;padding:0 .5em}',
             /* подборки */
             '.yummy-rows{padding-bottom:3em}',
-            '.yummy-row{margin-top:1.6em}',
+            '.yummy-row{margin-top:1.1em}',
             '.yummy-row__t{font-size:1.5em;font-weight:700;letter-spacing:-.02em;margin:0 0 .1em 1.35em}',
             '.yummy-row .scroll__body{display:flex;flex-wrap:nowrap;padding:1.1em 2em 2.4em}',
             '.yummy-grid{display:flex;flex-wrap:wrap;padding:1.2em 1.4em 3em}',
@@ -1173,28 +1170,32 @@
             '.yummy-bar{position:absolute;left:.7em;right:.7em;bottom:.7em;height:.3em;border-radius:.3em;background:rgba(255,255,255,.28);overflow:hidden}',
             '.yummy-bar i{display:block;height:100%;background:#a78bfa;border-radius:.3em}',
             /* страница тайтла */
-            '.yummy-title{position:relative;overflow:hidden;min-height:26em}',
+            '.yummy-title{position:relative;overflow:hidden;min-height:20em}',
             '.yummy-title__bg{opacity:.35;background-position:center 20%}',
             '.yummy-title__sh{position:absolute;top:0;left:0;right:0;bottom:0;background:linear-gradient(90deg,rgba(' + BG + ',.96) 0%,rgba(' + BG + ',.75) 55%,rgba(' + BG + ',.35) 100%),linear-gradient(0deg,rgba(' + BG + ',1) 0%,rgba(' + BG + ',0) 55%)}',
-            '.yummy-info{position:relative;display:flex;padding:2.4em 2.4em 1.2em}',
-            '.yummy-info__poster{flex:0 0 14em;height:21em;border-radius:1em;background:#1b1e27 center/cover no-repeat;margin-right:2.4em;}',
+            '.yummy-info{position:relative;display:flex;padding:1.8em 2.4em .6em}',
+            '.yummy-info__poster{flex:0 0 11.5em;height:17.25em;border-radius:1em;background:#1b1e27 center/cover no-repeat;margin-right:2em;}',
             '.yummy-info__body{flex:1;min-width:0}',
-            '.yummy-info__title{font-size:2.7em;font-weight:700;line-height:1.1;letter-spacing:-.025em}',
+            '.yummy-info__title{font-size:2.3em;font-weight:700;line-height:1.1;letter-spacing:-.025em}',
             '.yummy-info__orig{opacity:.5;margin-top:.35em;font-size:1.1em}',
             '.yummy-info__genres{opacity:.65;font-size:1.05em;margin-top:.2em}',
-            '.yummy-info__desc{margin:.9em 0 1.3em;line-height:1.5;opacity:.82;max-height:8.4em;overflow:hidden;font-size:1.1em;max-width:46em}',
+            '.yummy-info__desc{margin:.5em 0 1.1em;line-height:1.5;opacity:.78;max-height:4.6em;overflow:hidden;font-size:1.05em;max-width:40em;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}',
             /* озвучка */
-            '.yummy-block{padding:0 2em}',
+            '.yummy-block{padding:0 2.4em}',
+            '.yummy-opts{margin:.2em 0 .4em}',
+            '.yummy-opt{display:inline-block;margin-right:.8em;padding:.45em 1.1em;border-radius:2em;background:rgba(255,255,255,.07);font-size:1.05em;transition:transform .15s}',
+            '.yummy-opt__l{opacity:.55;margin-right:.55em}',
+            '.yummy-opt.focus{background:#ddd6fe;color:#2e1065;transform:scale(1.05)}',
             '.yummy-panel{padding:1.2em 1.5em;border-radius:1.2em;margin-top:.4em}',
             '.yummy-panel__t{font-size:1.4em;font-weight:700}',
             '.yummy-panel__s{opacity:.6;margin:.15em 0 .9em}',
             '.yummy-chiprow{margin-top:.2em}',
             '.yummy-chiplabel{display:inline-block;opacity:.55;margin:0 .9em .6em 0;font-size:1.05em}',
-            '.yummy-chip{display:inline-block;padding:.5em 1.1em;margin:0 .6em .6em 0;border-radius:2em;background:rgba(139,92,246,.16);font-size:1.05em;font-weight:500;max-width:24em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:top;transition:transform .15s}',
+            '.yummy-chip{display:inline-block;padding:.5em 1.1em;margin:0 .6em .6em 0;border-radius:2em;background:rgba(255,255,255,.08);font-size:1.05em;font-weight:500;max-width:24em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:top;transition:transform .15s}',
             '.yummy-chip--on{background:rgba(139,92,246,.55)}',
             '.yummy-chip.focus{background:#ddd6fe;color:#2e1065;transform:scale(1.06)}',
             '.yummy-chip--season{flex:0 0 auto;display:block}',
-            '.yummy-cand{padding:.8em 1.1em;margin-bottom:.5em;border-radius:.9em;background:rgba(139,92,246,.14);transition:transform .15s}',
+            '.yummy-cand{padding:.8em 1.1em;margin-bottom:.5em;border-radius:.9em;background:rgba(255,255,255,.07);transition:transform .15s}',
             '.yummy-cand.focus{background:#ddd6fe;color:#2e1065;transform:scale(1.02)}',
             '.yummy-cand__s{opacity:.6;margin-top:.15em}',
             '.yummy-msg{margin:.6em 2em;padding:1.2em 1.5em;border-radius:1.2em}',
